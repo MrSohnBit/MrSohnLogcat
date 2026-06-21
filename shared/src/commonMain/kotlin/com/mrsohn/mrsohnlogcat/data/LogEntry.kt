@@ -1,6 +1,4 @@
-package com.mrsohn.mrsohnlogcat
-
-import com.sun.org.apache.xalan.internal.xsltc.compiler.Constants.FATAL
+package com.mrsohn.mrsohnlogcat.data
 
 data class LogEntry(
     val id: Long, // Unique ID for each log entry

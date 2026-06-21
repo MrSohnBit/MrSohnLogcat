@@ -1,4 +1,4 @@
-package com.mrsohn.mrsohnlogcat
+package com.mrsohn.mrsohnlogcat.data
 
 import kotlinx.coroutines.flow.Flow
 

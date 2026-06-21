@@ -1,5 +1,9 @@
 package com.mrsohn.mrsohnlogcat
 
+import com.mrsohn.mrsohnlogcat.data.DeviceInfo
+import com.mrsohn.mrsohnlogcat.data.LogEntry
+import com.mrsohn.mrsohnlogcat.data.LogLevel
+import com.mrsohn.mrsohnlogcat.data.LogRepository
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow

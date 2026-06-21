@@ -1,5 +1,6 @@
 package com.mrsohn.mrsohnlogcat
 
+import com.mrsohn.mrsohnlogcat.expect.SettingsRepository
 import java.util.prefs.Preferences
 
 class JvmSettingsRepository : SettingsRepository {

@@ -1,4 +1,4 @@
-package com.mrsohn.mrsohnlogcat
+package com.mrsohn.mrsohnlogcat.expect
 
 interface SettingsRepository {
     fun getString(key: String, defaultValue: String): String
