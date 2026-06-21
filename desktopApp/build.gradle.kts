@@ -24,21 +24,26 @@ compose.desktop {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "MrSohn Logcat"
             packageVersion = "1.0.0"
-
-
-            windows {
-                shortcut = true // 윈도우 시작 메뉴 바로가기 자동 생성
-                menu = true
-//                iconFile.set(project.file("icons/app_icon.ico")) // 윈도우용 아이콘
-//                iconFile.set(project.file("src/main/resources/icon.ico"))
-            }
-            macOS {
-                dockName = "MrSohn Logcat"
-//                iconFile.set(project.file("icons/app_icon.icns")) // Mac용 아이콘
-            }
-
         }
-
-
     }
 }
+//        nativeDistributions {
+//            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
+//            packageName = "MrSohn Logcat"
+//            packageVersion = "1.0.0"
+//
+//
+//            windows {
+//                shortcut = true // 윈도우 시작 메뉴 바로가기 자동 생성
+//                menu = true
+////                iconFile.set(project.file("icons/app_icon.ico")) // 윈도우용 아이콘
+////                iconFile.set(project.file("src/main/resources/icon.ico"))
+//            }
+//            macOS {
+//                dockName = "MrSohn Logcat"
+////                iconFile.set(project.file("icons/app_icon.icns")) // Mac용 아이콘
+//            }
+//
+//        }
+//    }
+//}
