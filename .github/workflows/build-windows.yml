@@ -34,8 +34,7 @@ jobs:
           cache: gradle
 
       - name: Grant execute permission for gradlew
-        run: git update-index --chmod=+x gradlew
-        shell: bash
+        run: chmod +x gradlew
 
       - name: Build Desktop Application
         run: ./gradlew :desktopApp:${{ matrix.task }}
