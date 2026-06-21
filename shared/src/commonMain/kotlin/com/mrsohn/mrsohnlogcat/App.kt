@@ -5,8 +5,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Settings
@@ -27,6 +29,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.milliseconds
 
 @Composable
 @Preview
@@ -165,8 +168,7 @@ fun LogcatScreen(
     var filterText by remember { mutableStateOf(settings.getString("filterText", "")) }
     var tagFilter by remember { mutableStateOf(settings.getString("tagFilter", "")) }
     var packageFilter by remember { mutableStateOf(settings.getString("packageFilter", "")) }
-    var excludeMessageText by remember { mutableStateOf(settings.getString("excludeText", "")) }
-    var excludeTagText by remember { mutableStateOf(settings.getString("excludeTagText", "")) }
+    var includeMessageText by remember { mutableStateOf(settings.getString("includeText", "")) }
     var isRegex by remember { mutableStateOf(settings.getBoolean("isRegex", false)) }
     
     // Level Filters
@@ -193,6 +195,7 @@ fun LogcatScreen(
     var showSettingsDialog by remember { mutableStateOf(false) }
     val searchFocusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
+    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
     
     val listState = rememberLazyListState()
     var autoScroll by remember { mutableStateOf(true) }
@@ -203,8 +206,7 @@ fun LogcatScreen(
     LaunchedEffect(filterText) { settings.setString("filterText", filterText) }
     LaunchedEffect(tagFilter) { settings.setString("tagFilter", tagFilter) }
     LaunchedEffect(packageFilter) { settings.setString("packageFilter", packageFilter) }
-    LaunchedEffect(excludeMessageText) { settings.setString("excludeText", excludeMessageText) }
-    LaunchedEffect(excludeTagText) { settings.setString("excludeTagText", excludeTagText) }
+    LaunchedEffect(includeMessageText) { settings.setString("includeText", includeMessageText) }
     LaunchedEffect(isRegex) { settings.setBoolean("isRegex", isRegex) }
     LaunchedEffect(selectedDeviceSerial) { settings.setString("selectedDevice", selectedDeviceSerial) }
     
@@ -229,20 +231,16 @@ fun LogcatScreen(
             if (selectedDeviceSerial.isEmpty() && devices.isNotEmpty()) {
                 selectedDeviceSerial = devices.first().serial
             }
-            kotlinx.coroutines.delay(3000)
+            kotlinx.coroutines.delay(3000.milliseconds)
         }
     }
 
-    val filteredLogs = remember(logUpdateTick, tagFilter, targetPids, packageFilter, excludeMessageText, excludeTagText, selectedLevels) {
-        val excludeMessageList = excludeMessageText.split(";").map { it.trim() }.filter { it.isNotEmpty() }
-        val excludeTagList = excludeTagText.split(";").map { it.trim() }.filter { it.isNotEmpty() }
+    val filteredLogs = remember(logUpdateTick, tagFilter, targetPids, packageFilter, includeMessageText, selectedLevels, 
+                                showTimestamp, showPid, showTid, showLevel, showTag, showPackage) {
+        val includeWords = includeMessageText.split(";").map { it.trim() }.filter { it.isNotEmpty() }
         
         logs.filter { entry ->
             if (!selectedLevels.contains(entry.level)) return@filter false
-
-            // Exclude logic
-            if (excludeMessageList.any { entry.message.contains(it, ignoreCase = true) }) return@filter false
-            if (excludeTagList.any { entry.tag.contains(it, ignoreCase = true) }) return@filter false
 
             // Package filtering: supports exact match or prefix match (e.g., "com.mrsohn")
             val matchesPackage = packageFilter.isEmpty() || 
@@ -252,8 +250,23 @@ fun LogcatScreen(
             if (!matchesPackage) return@filter false
 
             val matchesTag = tagFilter.isEmpty() || entry.tag.contains(tagFilter, ignoreCase = true)
+            if (!matchesTag) return@filter false
+
+            // Include logic: If words are provided, constructing a string from ONLY visible fields
+            if (includeWords.isNotEmpty()) {
+                val visibleContent = buildString {
+//                    if (showTimestamp) append(entry.timestamp).append(" ")
+//                    if (showPid) append(entry.processId).append(" ")
+//                    if (showTid) append(entry.threadId).append(" ")
+                    if (showPackage) append(entry.packageName ?: "").append(" ")
+                    if (showTag) append(entry.tag).append(" ")
+//                    if (showLevel) append(entry.level.name).append(" ")
+                    append(entry.message)
+                }
+                if (includeWords.none { visibleContent.contains(it, ignoreCase = true) }) return@filter false
+            }
             
-            matchesTag
+            true
         }
     }
 
@@ -354,8 +367,26 @@ fun LogcatScreen(
             .fillMaxSize()
             .onPreviewKeyEvent { 
                 if (it.type == KeyEventType.KeyDown) {
-                    if (it.isCtrlPressed && it.key == Key.F) {
-                        searchFocusRequester.requestFocus()
+                    if ((it.isCtrlPressed || it.isMetaPressed) && it.key == Key.F) {
+                        scope.launch {
+                            kotlinx.coroutines.delay(50)
+                            searchFocusRequester.requestFocus()
+                        }
+                        return@onPreviewKeyEvent true
+                    }
+                    if ((it.isCtrlPressed || it.isMetaPressed) && it.key == Key.A) {
+                        val textToCopy = filteredLogs.joinToString("\n") { entry ->
+                            buildString {
+                                if (showTimestamp) append("${entry.timestamp} ")
+                                if (showPid) append(entry.processId.toString().padStart(5)).append(" ")
+                                if (showTid) append(entry.threadId.toString().padStart(5)).append(" ")
+                                if (showPackage) append((entry.packageName ?: "?").padEnd(25)).append(" ")
+                                if (showTag) append(entry.tag.padEnd(35)).append(" ")
+                                if (showLevel) append("${entry.level.name.first()} ")
+                                append(entry.message)
+                            }
+                        }
+                        clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(textToCopy))
                         return@onPreviewKeyEvent true
                     }
                     if (it.key == Key.Escape) {
@@ -387,154 +418,36 @@ fun LogcatScreen(
         Row(
             modifier = Modifier.fillMaxWidth().padding(8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Device Selector
-            var showDeviceMenu by remember { mutableStateOf(false) }
-            val currentDevice = devices.find { it.serial == selectedDeviceSerial }
-            Box {
-                OutlinedButton(onClick = { showDeviceMenu = true }) {
-                    Text(currentDevice?.let { "${it.model} (${it.serial})" } ?: "No Device")
-                }
-                DropdownMenu(expanded = showDeviceMenu, onDismissRequest = { showDeviceMenu = false }) {
-                    devices.forEach { device ->
-                        DropdownMenuItem(
-                            text = { Text("${device.model} (${device.serial})") },
-                            onClick = {
-                                selectedDeviceSerial = device.serial
-                                showDeviceMenu = false
-                            }
-                        )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Device: ", style = MaterialTheme.typography.bodySmall, fontSize = 11.sp)
+                // Device Selector
+                var showDeviceMenu by remember { mutableStateOf(false) }
+                val currentDevice = devices.find { it.serial == selectedDeviceSerial }
+                Box {
+                    OutlinedButton(
+                        onClick = { showDeviceMenu = true },
+                        modifier = Modifier.height(32.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                    ) {
+                        Text(currentDevice?.let { "${it.model} (${it.serial})" } ?: "No Device", fontSize = 12.sp)
                     }
-                }
-            }
-
-            TextField(
-                value = filterText,
-                onValueChange = { filterText = it },
-                label = { Text("Search (Messages)") },
-                modifier = Modifier.weight(1f).focusRequester(searchFocusRequester),
-                singleLine = true,
-                trailingIcon = {
-                    if (searchMatches.isNotEmpty()) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "${currentSearchMatchIndex + 1}/${searchMatches.size}",
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.padding(end = 8.dp)
+                    DropdownMenu(expanded = showDeviceMenu, onDismissRequest = { showDeviceMenu = false }) {
+                        devices.forEach { device ->
+                            DropdownMenuItem(
+                                text = { Text("${device.model} (${device.serial})") },
+                                onClick = {
+                                    selectedDeviceSerial = device.serial
+                                    showDeviceMenu = false
+                                }
                             )
-                            IconButton(onClick = {
-                                currentSearchMatchIndex = if (currentSearchMatchIndex <= 0) searchMatches.size - 1 else currentSearchMatchIndex - 1
-                                autoScroll = false
-                                scope.launch { listState.animateScrollToItem(searchMatches[currentSearchMatchIndex]) }
-                            }, modifier = Modifier.size(24.dp)) {
-                                Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Prev")
-                            }
-                            IconButton(onClick = {
-                                currentSearchMatchIndex = (currentSearchMatchIndex + 1) % searchMatches.size
-                                autoScroll = false
-                                scope.launch { listState.animateScrollToItem(searchMatches[currentSearchMatchIndex]) }
-                            }, modifier = Modifier.size(24.dp)) {
-                                Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Next")
-                            }
                         }
                     }
                 }
-            )
-            
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = isRegex, onCheckedChange = { isRegex = it })
-                Text("Use Regex", style = MaterialTheme.typography.bodySmall)
             }
 
-            TextField(
-                value = tagFilter,
-                onValueChange = { tagFilter = it },
-                label = { Text("Filter Tag") },
-                modifier = Modifier.width(180.dp),
-                singleLine = true
-            )
 
-            TextField(
-                value = packageFilter,
-                onValueChange = { packageFilter = it },
-                label = { Text("Package Name") },
-                modifier = Modifier.width(240.dp),
-                singleLine = true
-            )
-
-            Button(onClick = { logs.clear() }) {
-                Text("Clear Logs")
-            }
-
-            Button(
-                onClick = { isPaused = !isPaused },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isPaused) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-                )
-            ) {
-                Text(if (isPaused) "Resume" else "Pause")
-            }
-
-            IconButton(onClick = { showSettingsDialog = true }) {
-                Icon(Icons.Default.Settings, contentDescription = "Settings")
-            }
-
-            Text(
-                text = "${filteredLogs.size}/${logs.size}",
-                style = MaterialTheme.typography.bodySmall,
-                color = Color.Gray,
-                modifier = Modifier.padding(start = 4.dp)
-            )
-        }
-
-        // Exclude and Format Toolbar
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            TextField(
-                value = excludeMessageText,
-                onValueChange = { excludeMessageText = it },
-                label = { Text("Exclude Messages (e.g. word1; word2)") },
-                modifier = Modifier.weight(0.6f),
-                singleLine = true
-            )
-
-            TextField(
-                value = excludeTagText,
-                onValueChange = { excludeTagText = it },
-                label = { Text("Exclude Tags (e.g. Tag1; Tag2)") },
-                modifier = Modifier.weight(0.4f),
-                singleLine = true
-            )
-        }
-
-        // Level and Format Toolbar
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            // Log Levels
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Levels:", style = MaterialTheme.typography.bodySmall)
-                LogLevel.entries.forEach { level ->
-                    FilterChip(
-                        selected = selectedLevels.contains(level),
-                        onClick = {
-                            selectedLevels = if (selectedLevels.contains(level)) {
-                                selectedLevels - level
-                            } else {
-                                selectedLevels + level
-                            }
-                        },
-                        label = { Text(level.name.take(1), fontSize = 10.sp) },
-                        modifier = Modifier.height(24.dp)
-                    )
-                }
-            }
 
             // Show Options
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -574,15 +487,239 @@ fun LogcatScreen(
                         Text("+", color = Color.White)
                     }
                 }
-                
+
+
+                IconButton(onClick = { showSettingsDialog = true }, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Default.Settings, contentDescription = "Settings", modifier = Modifier.size(20.dp))
+                }
+            }
+
+        }
+
+
+        // Level and Format Toolbar
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            // Log Levels
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Levels:", style = MaterialTheme.typography.bodySmall)
+                LogLevel.entries.forEach { level ->
+                    FilterChip(
+                        selected = selectedLevels.contains(level),
+                        onClick = {
+                            selectedLevels = if (selectedLevels.contains(level)) {
+                                selectedLevels - level
+                            } else {
+                                selectedLevels + level
+                            }
+                        },
+                        label = { Text(level.name.take(1), fontSize = 10.sp) },
+                        modifier = Modifier.height(24.dp)
+                    )
+                }
+            }
+
+        }
+
+
+
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+//            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Display:", style = MaterialTheme.typography.bodySmall)
+            FormatCheckbox("Time", showTimestamp, Color(0xFF4FC3F7)) { showTimestamp = it }
+            FormatCheckbox("PID", showPid, Color(0xFFFFA726)) { showPid = it }
+            FormatCheckbox("TID", showTid, Color(0xFFBA68C8)) { showTid = it }
+            FormatCheckbox("Level", showLevel, Color(0xFF66BB6A)) { showLevel = it }
+            FormatCheckbox("Package", showPackage, Color(0xFFAED581)) { showPackage = it }
+            FormatCheckbox("Tag", showTag, Color(0xFFF06292)) { showTag = it }
+
+        }
+
+
+        // Include and Format Toolbar
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+
+
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                Text("Package: ", style = MaterialTheme.typography.bodySmall, fontSize = 11.sp)
+                BasicTextField(
+                    value = packageFilter,
+                    onValueChange = { packageFilter = it },
+                    modifier = Modifier.weight(1f).height(28.dp).background(if (isDark) Color.DarkGray else Color.LightGray, MaterialTheme.shapes.small).padding(horizontal = 8.dp),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = if (isDark) Color.White else Color.Black),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(if (isDark) Color.White else Color.Black),
+                    singleLine = true,
+                    decorationBox = { innerTextField ->
+                        Box(contentAlignment = Alignment.CenterStart) {
+                            innerTextField()
+                        }
+                    }
+                )
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                Text("Tag: ", style = MaterialTheme.typography.bodySmall, fontSize = 11.sp)
+                BasicTextField(
+                    value = tagFilter,
+                    onValueChange = { tagFilter = it },
+                    modifier = Modifier.weight(1f).height(28.dp).background(if (isDark) Color.DarkGray else Color.LightGray, MaterialTheme.shapes.small).padding(horizontal = 8.dp),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = if (isDark) Color.White else Color.Black),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(if (isDark) Color.White else Color.Black),
+                    singleLine = true,
+                    decorationBox = { innerTextField ->
+                        Box(contentAlignment = Alignment.CenterStart) {
+                            innerTextField()
+                        }
+                    }
+                )
+            }
+        }
+        // Include and Format Toolbar
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp).padding(top = 4.dp, bottom = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("Include: ", style = MaterialTheme.typography.bodySmall, fontSize = 11.sp)
+            BasicTextField(
+                value = includeMessageText,
+                onValueChange = { includeMessageText = it },
+                modifier = Modifier.fillMaxWidth().height(28.dp).background(if (isDark) Color.DarkGray else Color.LightGray, MaterialTheme.shapes.small),
+                textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = if (isDark) Color.White else Color.Black),
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(if (isDark) Color.White else Color.Black),
+                singleLine = true,
+                decorationBox = { innerTextField ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                            innerTextField()
+                        }
+                        if (includeMessageText.isNotEmpty()) {
+                            IconButton(onClick = { includeMessageText = "" }, modifier = Modifier.size(20.dp)) {
+                                Icon(Icons.Default.Clear, contentDescription = "Clear", modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+            )
+        }
+
+        // Action Buttons Row (Search, Clear, Pause, Settings, Info)
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("Search: ", style = MaterialTheme.typography.bodySmall, fontSize = 11.sp)
+                BasicTextField(
+                    value = filterText,
+                    onValueChange = { filterText = it },
+                    modifier = Modifier.weight(1f).height(28.dp).background(if (isDark) Color.DarkGray else Color.LightGray, MaterialTheme.shapes.small).padding(horizontal = 8.dp).focusRequester(searchFocusRequester)
+                        .onPreviewKeyEvent {
+                            if (it.type == KeyEventType.KeyDown && it.key == Key.Enter && searchMatches.isNotEmpty()) {
+                                currentSearchMatchIndex = (currentSearchMatchIndex + 1) % searchMatches.size
+                                autoScroll = false
+                                scope.launch {
+                                    listState.animateScrollToItem(searchMatches[currentSearchMatchIndex])
+                                }
+                                return@onPreviewKeyEvent true
+                            }
+                            false
+                        },
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = if (isDark) Color.White else Color.Black),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(if (isDark) Color.White else Color.Black),
+                    singleLine = true,
+                    decorationBox = { innerTextField ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                                innerTextField()
+                            }
+                            if (searchMatches.isNotEmpty()) {
+                                Text(
+                                    text = "${currentSearchMatchIndex + 1}/${searchMatches.size}",
+                                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
+                                    modifier = Modifier.padding(end = 4.dp)
+                                )
+                                IconButton(onClick = {
+                                    currentSearchMatchIndex = if (currentSearchMatchIndex <= 0) searchMatches.size - 1 else currentSearchMatchIndex - 1
+                                    autoScroll = false
+                                    scope.launch { listState.animateScrollToItem(searchMatches[currentSearchMatchIndex]) }
+                                }, modifier = Modifier.size(20.dp)) {
+                                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Prev", modifier = Modifier.size(16.dp))
+                                }
+                                IconButton(onClick = {
+                                    currentSearchMatchIndex = (currentSearchMatchIndex + 1) % searchMatches.size
+                                    autoScroll = false
+                                    scope.launch { listState.animateScrollToItem(searchMatches[currentSearchMatchIndex]) }
+                                }, modifier = Modifier.size(20.dp)) {
+                                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Next", modifier = Modifier.size(16.dp))
+                                }
+                            }
+                            if (filterText.isNotEmpty()) {
+                                IconButton(onClick = { 
+                                    filterText = "" 
+                                    logs.clear()
+                                    logUpdateTick++
+                                }, modifier = Modifier.size(20.dp)) {
+                                    Icon(Icons.Default.Clear, contentDescription = "Clear", modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                    }
+                )
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = isRegex, onCheckedChange = { isRegex = it }, modifier = Modifier.size(24.dp))
+                    Text("Regex", style = MaterialTheme.typography.bodySmall, fontSize = 11.sp)
+                }
+            }
+
+            Spacer(Modifier.width(16.dp))
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "Logs: ${filteredLogs.size}/${logs.size}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray,
+                    modifier = Modifier.padding(end = 12.dp)
+                )
+
+                Button(
+                    onClick = { isPaused = !isPaused },
+                    modifier = Modifier.height(32.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isPaused) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    Text(if (isPaused) "Resume" else "Pause", fontSize = 12.sp)
+                }
                 Spacer(Modifier.width(8.dp))
-                Text("Display:", style = MaterialTheme.typography.bodySmall)
-                FormatCheckbox("Time", showTimestamp) { showTimestamp = it }
-                FormatCheckbox("PID", showPid) { showPid = it }
-                FormatCheckbox("TID", showTid) { showTid = it }
-                FormatCheckbox("Level", showLevel) { showLevel = it }
-                FormatCheckbox("Tag", showTag) { showTag = it }
-                FormatCheckbox("Package", showPackage) { showPackage = it }
+                Button(
+                    onClick = {
+                        logs.clear()
+                        logUpdateTick++
+                    },
+                    modifier = Modifier.height(32.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                ) {
+                    Text("Clear", fontSize = 12.sp)
+                }
+
             }
         }
 
@@ -623,7 +760,8 @@ fun LogcatScreen(
                             showPackage,
                             fontSize,
                             filterText,
-                            isCurrentMatch
+                            isCurrentMatch,
+                            includeMessageText
                         )
                     }
                 }
@@ -703,14 +841,23 @@ fun AdbSettingsDialog(
 }
 
 @Composable
-fun FormatCheckbox(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+fun FormatCheckbox(label: String, checked: Boolean, color: Color, onCheckedChange: (Boolean) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Checkbox(
             checked = checked, 
             onCheckedChange = onCheckedChange,
-            modifier = Modifier.size(24.dp)
+            modifier = Modifier.size(24.dp),
+            colors = CheckboxDefaults.colors(
+                checkedColor = color,
+                uncheckedColor = color.copy(alpha = 0.5f)
+            )
         )
-        Text(label, style = MaterialTheme.typography.bodySmall, fontSize = 10.sp)
+        Text(
+            label, 
+            style = MaterialTheme.typography.bodySmall, 
+            fontSize = 10.sp,
+            color = if (checked) color else Color.Gray
+        )
     }
 }
 
@@ -725,7 +872,8 @@ fun LogEntryRow(
     showPackage: Boolean,
     fontSize: Int,
     searchQuery: String = "",
-    isFocusedMatch: Boolean = false
+    isFocusedMatch: Boolean = false,
+    includeQuery: String = ""
 ) {
     val isDark = !MaterialTheme.colorScheme.surface.let { 
         (it.red * 0.299 + it.green * 0.587 + it.blue * 0.114) > 0.5 
@@ -743,27 +891,40 @@ fun LogEntryRow(
     val contentFontSize = fontSize.sp
 
     val annotatedText = buildAnnotatedString {
-        val header = buildString {
-            if (showTimestamp) append("${entry.timestamp} ")
-            if (showPid || showTid) {
-                if (showPid) append(entry.processId.toString().padStart(5))
-                if (showPid && showTid) append("-")
-                if (showTid) append(entry.threadId.toString().padStart(5))
-                append(" ")
-            }
-            if (showPackage) {
-                val pkg = (entry.packageName ?: "?").padEnd(25)
-                append("$pkg ")
-            }
-            if (showTag) {
-                val tag = entry.tag.padEnd(35)
-                append("$tag ")
-            }
-            if (showLevel) append("${entry.level.name.first()}  ")
+        if (showTimestamp) {
+            val start = length
+            append("${entry.timestamp} ")
+            addStyle(SpanStyle(color = Color(0xFF4FC3F7)), start, length)
         }
         
-        append(header)
-        addStyle(SpanStyle(color = color.copy(alpha = 0.8f)), 0, length)
+        if (showPid || showTid) {
+            val start = length
+            if (showPid) append(entry.processId.toString().padStart(5))
+            if (showPid && showTid) append("-")
+            if (showTid) append(entry.threadId.toString().padStart(5))
+            append(" ")
+            addStyle(SpanStyle(color = Color(0xFFFFA726)), start, length)
+        }
+
+        if (showPackage) {
+            val start = length
+            val pkg = (entry.packageName ?: "?").padEnd(25)
+            append("$pkg ")
+            addStyle(SpanStyle(color = Color(0xFFAED581)), start, length)
+        }
+
+        if (showTag) {
+            val start = length
+            val tag = entry.tag.padEnd(35)
+            append("$tag ")
+            addStyle(SpanStyle(color = Color(0xFFF06292)), start, length)
+        }
+
+        if (showLevel) {
+            val start = length
+            append("${entry.level.name.first()}  ")
+            addStyle(SpanStyle(color = color, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold), start, length)
+        }
 
         val messageStart = length
         append(entry.message)
@@ -801,6 +962,27 @@ fun LogEntryRow(
                     end
                 )
                 startIndex = entry.message.indexOf(searchQuery, startIndex + 1, ignoreCase = true)
+            }
+        }
+
+        // Include Keywords Highlighting
+        if (includeQuery.isNotEmpty()) {
+            val words = includeQuery.split(";").map { it.trim() }.filter { it.isNotEmpty() }
+            words.forEach { word ->
+                var startIndex = entry.message.indexOf(word, ignoreCase = true)
+                while (startIndex >= 0) {
+                    val start = messageStart + startIndex
+                    val end = start + word.length
+                    addStyle(
+                        SpanStyle(
+                            background = Color(0xff63cdc3).copy(alpha = 0.8f), // Teal-ish Green for Include
+                            color = if (isDark) Color.Black else Color.Unspecified
+                        ),
+                        start,
+                        end
+                    )
+                    startIndex = entry.message.indexOf(word, startIndex + 1, ignoreCase = true)
+                }
             }
         }
     }

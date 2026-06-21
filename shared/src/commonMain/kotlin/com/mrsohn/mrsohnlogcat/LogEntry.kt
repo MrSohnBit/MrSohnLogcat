@@ -1,5 +1,7 @@
 package com.mrsohn.mrsohnlogcat
 
+import com.sun.org.apache.xalan.internal.xsltc.compiler.Constants.FATAL
+
 data class LogEntry(
     val id: Long, // Unique ID for each log entry
     val timestamp: String,
@@ -12,17 +14,17 @@ data class LogEntry(
 )
 
 enum class LogLevel {
-    VERBOSE, DEBUG, INFO, WARN, ERROR, FATAL;
+    INFO,DEBUG, VERBOSE, FATAL, WARN, ERROR;
 
     companion object {
         fun fromLetter(letter: String): LogLevel {
             return when (letter.uppercase()) {
-                "V" -> VERBOSE
-                "D" -> DEBUG
                 "I" -> INFO
+                "D" -> DEBUG
+                "V" -> VERBOSE
+                "F" -> FATAL
                 "W" -> WARN
                 "E" -> ERROR
-                "F" -> FATAL
                 else -> DEBUG
             }
         }
