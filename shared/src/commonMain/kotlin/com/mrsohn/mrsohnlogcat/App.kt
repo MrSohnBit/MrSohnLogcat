@@ -9,6 +9,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -43,7 +44,7 @@ fun App() {
         else -> androidx.compose.foundation.isSystemInDarkTheme()
     }
 
-    val repositoryForCheck = remember { getLogRepository(adbPath) }
+    val repositoryForCheck = remember(adbPath) { getLogRepository(adbPath) }
     LaunchedEffect(adbPath) {
         isAdbValid = repositoryForCheck.checkAdb(adbPath)
     }
@@ -64,10 +65,18 @@ fun App() {
                     }
                 )
             } else if (isAdbValid == true) {
-                LogcatScreen(adbPath, themeMode) { newMode ->
-                    themeMode = newMode
-                    settings.setString("themeMode", newMode.toString())
-                }
+                LogcatScreen(
+                    adbPath = adbPath,
+                    themeMode = themeMode,
+                    onThemeChange = { newMode ->
+                        themeMode = newMode
+                        settings.setString("themeMode", newMode.toString())
+                    },
+                    onAdbPathChange = { newPath ->
+                        adbPath = newPath
+                        settings.setString("adbPath", newPath)
+                    }
+                )
             } else {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
@@ -134,7 +143,12 @@ fun AdbSetupScreen(initialPath: String, onPathSelected: (String) -> Unit) {
 }
 
 @Composable
-fun LogcatScreen(adbPath: String, themeMode: Int, onThemeChange: (Int) -> Unit) {
+fun LogcatScreen(
+    adbPath: String,
+    themeMode: Int,
+    onThemeChange: (Int) -> Unit,
+    onAdbPathChange: (String) -> Unit
+) {
     val isDark = when (themeMode) {
         1 -> false
         2 -> true
@@ -176,6 +190,7 @@ fun LogcatScreen(adbPath: String, themeMode: Int, onThemeChange: (Int) -> Unit) 
 
     var targetPids by remember { mutableStateOf(setOf<Int>()) }
     var logUpdateTick by remember { mutableStateOf(0L) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
     val searchFocusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     
@@ -461,6 +476,10 @@ fun LogcatScreen(adbPath: String, themeMode: Int, onThemeChange: (Int) -> Unit) 
                 Text(if (isPaused) "Resume" else "Pause")
             }
 
+            IconButton(onClick = { showSettingsDialog = true }) {
+                Icon(Icons.Default.Settings, contentDescription = "Settings")
+            }
+
             Text(
                 text = "${filteredLogs.size}/${logs.size}",
                 style = MaterialTheme.typography.bodySmall,
@@ -633,6 +652,54 @@ fun LogcatScreen(adbPath: String, themeMode: Int, onThemeChange: (Int) -> Unit) 
             }
         }
     }
+
+    if (showSettingsDialog) {
+        AdbSettingsDialog(
+            currentPath = adbPath,
+            onDismiss = { showSettingsDialog = false },
+            onSave = { newPath ->
+                onAdbPathChange(newPath)
+                showSettingsDialog = false
+            }
+        )
+    }
+}
+
+@Composable
+fun AdbSettingsDialog(
+    currentPath: String,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit
+) {
+    var path by remember { mutableStateOf(currentPath) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Settings") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("ADB Path Configuration", style = MaterialTheme.typography.titleMedium)
+                Text("Enter the full path to the 'adb' executable:", style = MaterialTheme.typography.bodySmall)
+                TextField(
+                    value = path,
+                    onValueChange = { path = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("e.g. C:\\Android\\Sdk\\platform-tools\\adb.exe") },
+                    singleLine = true
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onSave(path) }) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 @Composable
