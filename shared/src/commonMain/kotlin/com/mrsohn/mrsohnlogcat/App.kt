@@ -8,9 +8,13 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -170,6 +174,29 @@ fun LogcatScreen(
     var packageFilter by remember { mutableStateOf(settings.getString("packageFilter", "")) }
     var includeMessageText by remember { mutableStateOf(settings.getString("includeText", "")) }
     var isRegex by remember { mutableStateOf(settings.getBoolean("isRegex", false)) }
+
+    var savedPackages by remember { 
+        mutableStateOf(
+            settings.getString("savedPackages", "").split("|").filter { it.isNotEmpty() }.toSet()
+        ) 
+    }
+    var savedTags by remember { 
+        mutableStateOf(
+            settings.getString("savedTags", "").split("|").filter { it.isNotEmpty() }.toSet()
+        ) 
+    }
+    var savedFilters by remember { 
+        mutableStateOf(
+            settings.getString("savedFilters", "").split("|").filter { it.isNotEmpty() }.toSet()
+        ) 
+    }
+    var savedSearches by remember { 
+        mutableStateOf(
+            settings.getString("savedSearches", "").split("|").filter { it.isNotEmpty() }.toSet()
+        ) 
+    }
+
+    var isAppInstalledOnDevice by remember { mutableStateOf(false) }
     
     // Level Filters
     var selectedLevels by remember { 
@@ -208,6 +235,10 @@ fun LogcatScreen(
     LaunchedEffect(packageFilter) { settings.setString("packageFilter", packageFilter) }
     LaunchedEffect(includeMessageText) { settings.setString("includeText", includeMessageText) }
     LaunchedEffect(isRegex) { settings.setBoolean("isRegex", isRegex) }
+    LaunchedEffect(savedPackages) { settings.setString("savedPackages", savedPackages.joinToString("|")) }
+    LaunchedEffect(savedTags) { settings.setString("savedTags", savedTags.joinToString("|")) }
+    LaunchedEffect(savedFilters) { settings.setString("savedFilters", savedFilters.joinToString("|")) }
+    LaunchedEffect(savedSearches) { settings.setString("savedSearches", savedSearches.joinToString("|")) }
     LaunchedEffect(selectedDeviceSerial) { settings.setString("selectedDevice", selectedDeviceSerial) }
     
     LaunchedEffect(showTimestamp) { settings.setBoolean("showTimestamp", showTimestamp) }
@@ -217,7 +248,10 @@ fun LogcatScreen(
     LaunchedEffect(showTag) { settings.setBoolean("showTag", showTag) }
     LaunchedEffect(showPackage) { settings.setBoolean("showPackage", showPackage) }
     LaunchedEffect(fontSize) { settings.setString("fontSize", fontSize.toString()) }
-    
+
+
+    val currentDevice = devices.find { it.serial == selectedDeviceSerial }
+
     LaunchedEffect(selectedLevels) {
         LogLevel.entries.forEach { 
             settings.setBoolean("level_${it.name}", selectedLevels.contains(it))
@@ -298,12 +332,18 @@ fun LogcatScreen(
         }
     }
 
-    LaunchedEffect(packageFilter, selectedDeviceSerial) {
+    LaunchedEffect(packageFilter, selectedDeviceSerial, currentDevice) {
+        if (packageFilter.isNotBlank() && selectedDeviceSerial.isNotEmpty()) {
+            isAppInstalledOnDevice = repository.isAppInstalled(packageFilter, selectedDeviceSerial)
+        } else {
+            isAppInstalledOnDevice = false
+        }
+
         if (packageFilter.isNotBlank()) {
             while (true) {
                 val pids = repository.getPidsForPackage(packageFilter, selectedDeviceSerial.ifEmpty { null })
                 targetPids = pids.toSet()
-                kotlinx.coroutines.delay(2000)
+                kotlinx.coroutines.delay(2000.milliseconds)
             }
         } else {
             targetPids = emptySet()
@@ -421,10 +461,10 @@ fun LogcatScreen(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Device: ", style = MaterialTheme.typography.bodySmall, fontSize = 11.sp)
+                Text("Device ", style = MaterialTheme.typography.bodySmall, fontSize = 11.sp)
                 // Device Selector
                 var showDeviceMenu by remember { mutableStateOf(false) }
-                val currentDevice = devices.find { it.serial == selectedDeviceSerial }
+
                 Box {
                     OutlinedButton(
                         onClick = { showDeviceMenu = true },
@@ -505,7 +545,7 @@ fun LogcatScreen(
         ) {
             // Log Levels
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Levels:", style = MaterialTheme.typography.bodySmall)
+                LabelTitle("Levels")
                 LogLevel.entries.forEach { level ->
                     FilterChip(
                         selected = selectedLevels.contains(level),
@@ -529,59 +569,187 @@ fun LogcatScreen(
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
 //            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text("Display:", style = MaterialTheme.typography.bodySmall)
+            LabelTitle("Display")
+            Spacer(modifier = Modifier.width(4.dp))
             FormatCheckbox("Time", showTimestamp, Color(0xFF4FC3F7)) { showTimestamp = it }
             FormatCheckbox("PID", showPid, Color(0xFFFFA726)) { showPid = it }
             FormatCheckbox("TID", showTid, Color(0xFFBA68C8)) { showTid = it }
             FormatCheckbox("Level", showLevel, Color(0xFF66BB6A)) { showLevel = it }
             FormatCheckbox("Package", showPackage, Color(0xFFAED581)) { showPackage = it }
             FormatCheckbox("Tag", showTag, Color(0xFFF06292)) { showTag = it }
-
         }
 
 
-        // Include and Format Toolbar
+        // Package and Tag Filters
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            // Package Filter
+            Row(verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                LabelTitle("Package")
+                BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                    var showDropdown by remember { mutableStateOf(false) }
+                    BasicTextField(
+                        value = packageFilter,
+                        onValueChange = { packageFilter = it },
+                        modifier = Modifier.fillMaxWidth().height(28.dp).background(if (isDark) Color.DarkGray else Color.LightGray, MaterialTheme.shapes.small).padding(horizontal = 8.dp)
+                            .onPreviewKeyEvent {
+                                if (it.type == KeyEventType.KeyDown && it.key == Key.Enter && packageFilter.isNotBlank()) {
+                                    if (!savedPackages.contains(packageFilter)) {
+                                        savedPackages = savedPackages + packageFilter
+                                    }
+                                    return@onPreviewKeyEvent true
+                                }
+                                false
+                            },
+                        textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = if (isDark) Color.White else Color.Black),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(if (isDark) Color.White else Color.Black),
+                        singleLine = true,
+                        decorationBox = { innerTextField ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                                    innerTextField()
+                                }
 
+                                if (packageFilter.isNotEmpty() && !savedPackages.contains(packageFilter)) {
+                                    IconButton(onClick = { savedPackages = savedPackages + packageFilter }, modifier = Modifier.size(20.dp)) {
+                                        Icon(Icons.Default.Add, contentDescription = "Save Package", modifier = Modifier.size(16.dp))
+                                    }
+                                }
 
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                Text("Package: ", style = MaterialTheme.typography.bodySmall, fontSize = 11.sp)
-                BasicTextField(
-                    value = packageFilter,
-                    onValueChange = { packageFilter = it },
-                    modifier = Modifier.weight(1f).height(28.dp).background(if (isDark) Color.DarkGray else Color.LightGray, MaterialTheme.shapes.small).padding(horizontal = 8.dp),
-                    textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = if (isDark) Color.White else Color.Black),
-                    cursorBrush = androidx.compose.ui.graphics.SolidColor(if (isDark) Color.White else Color.Black),
-                    singleLine = true,
-                    decorationBox = { innerTextField ->
-                        Box(contentAlignment = Alignment.CenterStart) {
-                            innerTextField()
+                                IconButton(onClick = { showDropdown = true }, modifier = Modifier.size(20.dp)) {
+                                    Icon(Icons.Default.ArrowDropDown, contentDescription = "Saved Packages", modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                    )
+                    DropdownMenu(
+                        expanded = showDropdown, 
+                        onDismissRequest = { showDropdown = false },
+                        modifier = Modifier.width(maxWidth)
+                    ) {
+                        if (savedPackages.isEmpty()) {
+                            DropdownMenuItem(text = { Text("No saved packages", fontSize = 12.sp) }, onClick = { })
+                        }
+                        savedPackages.forEach { pkg ->
+                            DropdownMenuItem(
+                                text = { 
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                        Text(pkg, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                                        IconButton(onClick = { savedPackages = savedPackages - pkg }, modifier = Modifier.size(24.dp)) {
+                                            Icon(Icons.Default.Delete, contentDescription = "Delete", modifier = Modifier.size(14.dp), tint = Color.Red)
+                                        }
+                                    }
+                                },
+                                onClick = {
+                                    packageFilter = pkg
+                                    showDropdown = false
+                                }
+                            )
                         }
                     }
-                )
+                }
+
+
+                Button(
+                    onClick = {
+                        scope.launch {
+                            repository.launchApp(packageFilter, selectedDeviceSerial)
+                        }
+                    },
+                    enabled = isAppInstalledOnDevice && currentDevice != null,
+                    modifier = Modifier.height(32.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        disabledContainerColor = if (isDark) Color(0xFF2D2D2D) else Color(0xFFE0E0E0),
+                        disabledContentColor = Color.Gray
+                    )
+                ) {
+                    Icon(
+                        Icons.Default.PlayArrow, 
+                        contentDescription = "Launch App", 
+                        modifier = Modifier.size(16.dp), 
+                        tint = if (isAppInstalledOnDevice) Color(0xFF66BB6A) else Color.Gray.copy(alpha = 0.5f)
+                    )
+                }
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                Text("Tag: ", style = MaterialTheme.typography.bodySmall, fontSize = 11.sp)
-                BasicTextField(
-                    value = tagFilter,
-                    onValueChange = { tagFilter = it },
-                    modifier = Modifier.weight(1f).height(28.dp).background(if (isDark) Color.DarkGray else Color.LightGray, MaterialTheme.shapes.small).padding(horizontal = 8.dp),
-                    textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = if (isDark) Color.White else Color.Black),
-                    cursorBrush = androidx.compose.ui.graphics.SolidColor(if (isDark) Color.White else Color.Black),
-                    singleLine = true,
-                    decorationBox = { innerTextField ->
-                        Box(contentAlignment = Alignment.CenterStart) {
-                            innerTextField()
+            // Tag Filter
+            Row(verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f).padding(start = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),) {
+                Text("Tag", style = MaterialTheme.typography.bodySmall, fontSize = 11.sp)
+                BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                    var showDropdown by remember { mutableStateOf(false) }
+                    BasicTextField(
+                        value = tagFilter,
+                        onValueChange = { tagFilter = it },
+                        modifier = Modifier.fillMaxWidth().height(28.dp).background(if (isDark) Color.DarkGray else Color.LightGray, MaterialTheme.shapes.small).padding(horizontal = 8.dp)
+                            .onPreviewKeyEvent {
+                                if (it.type == KeyEventType.KeyDown && it.key == Key.Enter && tagFilter.isNotBlank()) {
+                                    if (!savedTags.contains(tagFilter)) {
+                                        savedTags = savedTags + tagFilter
+                                    }
+                                    return@onPreviewKeyEvent true
+                                }
+                                false
+                            },
+                        textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = if (isDark) Color.White else Color.Black),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(if (isDark) Color.White else Color.Black),
+                        singleLine = true,
+                        decorationBox = { innerTextField ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                                    innerTextField()
+                                }
+
+                                if (tagFilter.isNotEmpty() && !savedTags.contains(tagFilter)) {
+                                    IconButton(onClick = { savedTags = savedTags + tagFilter }, modifier = Modifier.size(20.dp)) {
+                                        Icon(Icons.Default.Add, contentDescription = "Save Tag", modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                                
+                                IconButton(onClick = { showDropdown = true }, modifier = Modifier.size(20.dp)) {
+                                    Icon(Icons.Default.ArrowDropDown, contentDescription = "Saved Tags", modifier = Modifier.size(16.dp))
+                                }
+
+                            }
+                        }
+                    )
+                    DropdownMenu(
+                        expanded = showDropdown, 
+                        onDismissRequest = { showDropdown = false },
+                        modifier = Modifier.width(maxWidth)
+                    ) {
+                        if (savedTags.isEmpty()) {
+                            DropdownMenuItem(text = { Text("No saved tags", fontSize = 12.sp) }, onClick = { })
+                        }
+                        savedTags.forEach { tag ->
+                            DropdownMenuItem(
+                                text = { 
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                        Text(tag, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                                        IconButton(onClick = { savedTags = savedTags - tag }, modifier = Modifier.size(24.dp)) {
+                                            Icon(Icons.Default.Delete, contentDescription = "Delete", modifier = Modifier.size(14.dp), tint = Color.Red)
+                                        }
+                                    }
+                                },
+                                onClick = {
+                                    tagFilter = tag
+                                    showDropdown = false
+                                }
+                            )
                         }
                     }
-                )
+                }
             }
         }
         // Include and Format Toolbar
@@ -590,51 +758,17 @@ fun LogcatScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text("Include: ", style = MaterialTheme.typography.bodySmall, fontSize = 11.sp)
-            BasicTextField(
-                value = includeMessageText,
-                onValueChange = { includeMessageText = it },
-                modifier = Modifier.fillMaxWidth().height(28.dp).background(if (isDark) Color.DarkGray else Color.LightGray, MaterialTheme.shapes.small),
-                textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = if (isDark) Color.White else Color.Black),
-                cursorBrush = androidx.compose.ui.graphics.SolidColor(if (isDark) Color.White else Color.Black),
-                singleLine = true,
-                decorationBox = { innerTextField ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                            innerTextField()
-                        }
-                        if (includeMessageText.isNotEmpty()) {
-                            IconButton(onClick = { includeMessageText = "" }, modifier = Modifier.size(20.dp)) {
-                                Icon(Icons.Default.Clear, contentDescription = "Clear", modifier = Modifier.size(16.dp))
-                            }
-                        }
-                    }
-                }
-            )
-        }
-
-        // Action Buttons Row (Search, Clear, Pause, Settings, Info)
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.weight(1f)
-            ) {
-                Text("Search: ", style = MaterialTheme.typography.bodySmall, fontSize = 11.sp)
+            LabelTitle("Filter")
+            BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                var showDropdown by remember { mutableStateOf(false) }
                 BasicTextField(
-                    value = filterText,
-                    onValueChange = { filterText = it },
-                    modifier = Modifier.weight(1f).height(28.dp).background(if (isDark) Color.DarkGray else Color.LightGray, MaterialTheme.shapes.small).padding(horizontal = 8.dp).focusRequester(searchFocusRequester)
+                    value = includeMessageText,
+                    onValueChange = { includeMessageText = it },
+                    modifier = Modifier.fillMaxWidth().height(28.dp).background(if (isDark) Color.DarkGray else Color.LightGray, MaterialTheme.shapes.small).padding(horizontal = 8.dp)
                         .onPreviewKeyEvent {
-                            if (it.type == KeyEventType.KeyDown && it.key == Key.Enter && searchMatches.isNotEmpty()) {
-                                currentSearchMatchIndex = (currentSearchMatchIndex + 1) % searchMatches.size
-                                autoScroll = false
-                                scope.launch {
-                                    listState.animateScrollToItem(searchMatches[currentSearchMatchIndex])
+                            if (it.type == KeyEventType.KeyDown && it.key == Key.Enter && includeMessageText.isNotBlank()) {
+                                if (!savedFilters.contains(includeMessageText)) {
+                                    savedFilters = savedFilters + includeMessageText
                                 }
                                 return@onPreviewKeyEvent true
                             }
@@ -648,39 +782,165 @@ fun LogcatScreen(
                             Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                                 innerTextField()
                             }
-                            if (searchMatches.isNotEmpty()) {
-                                Text(
-                                    text = "${currentSearchMatchIndex + 1}/${searchMatches.size}",
-                                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
-                                    modifier = Modifier.padding(end = 4.dp)
-                                )
-                                IconButton(onClick = {
-                                    currentSearchMatchIndex = if (currentSearchMatchIndex <= 0) searchMatches.size - 1 else currentSearchMatchIndex - 1
-                                    autoScroll = false
-                                    scope.launch { listState.animateScrollToItem(searchMatches[currentSearchMatchIndex]) }
-                                }, modifier = Modifier.size(20.dp)) {
-                                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Prev", modifier = Modifier.size(16.dp))
-                                }
-                                IconButton(onClick = {
-                                    currentSearchMatchIndex = (currentSearchMatchIndex + 1) % searchMatches.size
-                                    autoScroll = false
-                                    scope.launch { listState.animateScrollToItem(searchMatches[currentSearchMatchIndex]) }
-                                }, modifier = Modifier.size(20.dp)) {
-                                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Next", modifier = Modifier.size(16.dp))
+                            
+                            if (includeMessageText.isNotEmpty() && !savedFilters.contains(includeMessageText)) {
+                                IconButton(onClick = { savedFilters = savedFilters + includeMessageText }, modifier = Modifier.size(20.dp)) {
+                                    Icon(Icons.Default.Add, contentDescription = "Save Filter", modifier = Modifier.size(16.dp))
                                 }
                             }
-                            if (filterText.isNotEmpty()) {
-                                IconButton(onClick = { 
-                                    filterText = "" 
-                                    logs.clear()
-                                    logUpdateTick++
-                                }, modifier = Modifier.size(20.dp)) {
+
+                            IconButton(onClick = { showDropdown = true }, modifier = Modifier.size(20.dp)) {
+                                Icon(Icons.Default.ArrowDropDown, contentDescription = "Saved Filters", modifier = Modifier.size(16.dp))
+                            }
+
+                            if (includeMessageText.isNotEmpty()) {
+                                IconButton(onClick = { includeMessageText = "" }, modifier = Modifier.size(20.dp)) {
                                     Icon(Icons.Default.Clear, contentDescription = "Clear", modifier = Modifier.size(16.dp))
                                 }
                             }
                         }
                     }
                 )
+                DropdownMenu(
+                    expanded = showDropdown, 
+                    onDismissRequest = { showDropdown = false },
+                    modifier = Modifier.width(maxWidth)
+                ) {
+                    if (savedFilters.isEmpty()) {
+                        DropdownMenuItem(text = { Text("No saved filters", fontSize = 12.sp) }, onClick = { })
+                    }
+                    savedFilters.forEach { filter ->
+                        DropdownMenuItem(
+                            text = { 
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                    Text(filter, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                                    IconButton(onClick = { savedFilters = savedFilters - filter }, modifier = Modifier.size(24.dp)) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Delete", modifier = Modifier.size(14.dp), tint = Color.Red)
+                                    }
+                                }
+                            },
+                            onClick = {
+                                includeMessageText = filter
+                                showDropdown = false
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
+        // Action Buttons Row (Search, Clear, Pause, Settings, Info)
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                LabelTitle("Search")
+                BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                    var showDropdown by remember { mutableStateOf(false) }
+                    BasicTextField(
+                        value = filterText,
+                        onValueChange = { filterText = it },
+                        modifier = Modifier.fillMaxWidth().height(28.dp).background(if (isDark) Color.DarkGray else Color.LightGray, MaterialTheme.shapes.small).padding(horizontal = 8.dp).focusRequester(searchFocusRequester)
+                            .onPreviewKeyEvent {
+                            if (it.type == KeyEventType.KeyDown && it.key == Key.Enter) {
+                                if (filterText.isNotBlank() && !savedSearches.contains(filterText)) {
+                                    savedSearches = savedSearches + filterText
+                                }
+                                if (searchMatches.isNotEmpty()) {
+                                    currentSearchMatchIndex = (currentSearchMatchIndex + 1) % searchMatches.size
+                                    autoScroll = false
+                                    scope.launch {
+                                        listState.animateScrollToItem(searchMatches[currentSearchMatchIndex])
+                                    }
+                                }
+                                return@onPreviewKeyEvent true
+                            }
+                            false
+                        },
+                        textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = if (isDark) Color.White else Color.Black),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(if (isDark) Color.White else Color.Black),
+                        singleLine = true,
+                        decorationBox = { innerTextField ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                                    innerTextField()
+                                }
+                                
+                                if (filterText.isNotEmpty() && !savedSearches.contains(filterText)) {
+                                    IconButton(onClick = { savedSearches = savedSearches + filterText }, modifier = Modifier.size(20.dp)) {
+                                        Icon(Icons.Default.Add, contentDescription = "Save Search", modifier = Modifier.size(16.dp))
+                                    }
+                                }
+
+                                IconButton(onClick = { showDropdown = true }, modifier = Modifier.size(20.dp)) {
+                                    Icon(Icons.Default.ArrowDropDown, contentDescription = "Saved Searches", modifier = Modifier.size(16.dp))
+                                }
+
+                                if (searchMatches.isNotEmpty()) {
+                                    Text(
+                                        text = "${currentSearchMatchIndex + 1}/${searchMatches.size}",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
+                                        modifier = Modifier.padding(end = 4.dp)
+                                    )
+                                    IconButton(onClick = {
+                                        currentSearchMatchIndex = if (currentSearchMatchIndex <= 0) searchMatches.size - 1 else currentSearchMatchIndex - 1
+                                        autoScroll = false
+                                        scope.launch { listState.animateScrollToItem(searchMatches[currentSearchMatchIndex]) }
+                                    }, modifier = Modifier.size(20.dp)) {
+                                        Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Prev", modifier = Modifier.size(16.dp))
+                                    }
+                                    IconButton(onClick = {
+                                        currentSearchMatchIndex = (currentSearchMatchIndex + 1) % searchMatches.size
+                                        autoScroll = false
+                                        scope.launch { listState.animateScrollToItem(searchMatches[currentSearchMatchIndex]) }
+                                    }, modifier = Modifier.size(20.dp)) {
+                                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Next", modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                                if (filterText.isNotEmpty()) {
+                                    IconButton(onClick = { 
+                                        filterText = "" 
+                                        logs.clear()
+                                        logUpdateTick++
+                                    }, modifier = Modifier.size(20.dp)) {
+                                        Icon(Icons.Default.Clear, contentDescription = "Clear", modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            }
+                        }
+                    )
+                    DropdownMenu(
+                        expanded = showDropdown, 
+                        onDismissRequest = { showDropdown = false },
+                        modifier = Modifier.width(maxWidth)
+                    ) {
+                        if (savedSearches.isEmpty()) {
+                            DropdownMenuItem(text = { Text("No saved searches", fontSize = 12.sp) }, onClick = { })
+                        }
+                        savedSearches.forEach { search ->
+                            DropdownMenuItem(
+                                text = { 
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                        Text(search, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                                        IconButton(onClick = { savedSearches = savedSearches - search }, modifier = Modifier.size(24.dp)) {
+                                            Icon(Icons.Default.Delete, contentDescription = "Delete", modifier = Modifier.size(14.dp), tint = Color.Gray)
+                                        }
+                                    }
+                                },
+                                onClick = {
+                                    filterText = search
+                                    showDropdown = false
+                                }
+                            )
+                        }
+                    }
+                }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = isRegex, onCheckedChange = { isRegex = it }, modifier = Modifier.size(24.dp))
@@ -698,16 +958,16 @@ fun LogcatScreen(
                     modifier = Modifier.padding(end = 12.dp)
                 )
 
-                Button(
-                    onClick = { isPaused = !isPaused },
-                    modifier = Modifier.height(32.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isPaused) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-                    )
-                ) {
-                    Text(if (isPaused) "Resume" else "Pause", fontSize = 12.sp)
-                }
+//                Button(
+//                    onClick = { isPaused = !isPaused },
+//                    modifier = Modifier.height(32.dp),
+//                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+//                    colors = ButtonDefaults.buttonColors(
+//                        containerColor = if (isPaused) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+//                    )
+//                ) {
+//                    Text(if (isPaused) "Resume" else "Pause", fontSize = 12.sp)
+//                }
                 Spacer(Modifier.width(8.dp))
                 Button(
                     onClick = {
@@ -862,6 +1122,11 @@ fun FormatCheckbox(label: String, checked: Boolean, color: Color, onCheckedChang
 }
 
 @Composable
+fun LabelTitle(title: String) {
+    Text(title, style = MaterialTheme.typography.bodySmall, modifier = Modifier.widthIn(min = 46.dp))
+}
+
+@Composable
 fun LogEntryRow(
     entry: LogEntry,
     showTimestamp: Boolean,
@@ -990,6 +1255,7 @@ fun LogEntryRow(
     Row(modifier = Modifier.fillMaxWidth()) {
         Text(
             text = annotatedText,
+            modifier = Modifier.fillMaxWidth(),
             fontSize = contentFontSize,
             fontFamily = FontFamily.Monospace,
             lineHeight = contentFontSize // 줄 간격 최소화 (1.0배)

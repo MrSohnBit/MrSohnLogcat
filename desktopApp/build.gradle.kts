@@ -23,7 +23,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "MrSohn Logcat"
-            packageVersion = "1.0.1"
+            packageVersion = "1.0.2"
         }
     }
 }

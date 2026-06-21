@@ -8,6 +8,8 @@ interface LogRepository {
     suspend fun getPidsForPackage(packageName: String, deviceSerial: String? = null): List<Int>
     suspend fun checkAdb(adbPath: String = "adb"): Boolean
     suspend fun getDevices(): List<DeviceInfo>
+    suspend fun isAppInstalled(packageName: String, deviceSerial: String? = null): Boolean
+    suspend fun launchApp(packageName: String, deviceSerial: String? = null): Boolean
 }
 
 data class DeviceInfo(

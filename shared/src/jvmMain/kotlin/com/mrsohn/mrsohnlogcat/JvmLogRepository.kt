@@ -130,6 +130,39 @@ class JvmLogRepository(private val adbPath: String) : LogRepository {
         }
     }
 
+    override suspend fun isAppInstalled(packageName: String, deviceSerial: String?): Boolean = withContext(Dispatchers.IO) {
+        if (packageName.isBlank()) return@withContext false
+        try {
+            val commands = mutableListOf(actualAdb)
+            if (deviceSerial != null) commands.addAll(listOf("-s", deviceSerial))
+            commands.addAll(listOf("shell", "pm", "list", "packages", packageName))
+            
+            val process = ProcessBuilder(commands).start()
+            val reader = BufferedReader(InputStreamReader(process.inputStream))
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                if (line == "package:$packageName") return@withContext true
+            }
+            false
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    override suspend fun launchApp(packageName: String, deviceSerial: String?): Boolean = withContext(Dispatchers.IO) {
+        if (packageName.isBlank()) return@withContext false
+        try {
+            val commands = mutableListOf(actualAdb)
+            if (deviceSerial != null) commands.addAll(listOf("-s", deviceSerial))
+            commands.addAll(listOf("shell", "monkey", "-p", packageName, "-c", "android.intent.category.LAUNCHER", "1"))
+            
+            val process = ProcessBuilder(commands).start()
+            process.waitFor() == 0
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     private suspend fun getDeviceModel(serial: String): String = withContext(Dispatchers.IO) {
         try {
             val process = ProcessBuilder(actualAdb, "-s", serial, "shell", "getprop", "ro.product.model").start()
