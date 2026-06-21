@@ -36,8 +36,6 @@ import com.mrsohn.mrsohnlogcat.component.LogEntryRow
 import com.mrsohn.mrsohnlogcat.data.DeviceInfo
 import com.mrsohn.mrsohnlogcat.data.LogEntry
 import com.mrsohn.mrsohnlogcat.data.LogLevel
-import com.mrsohn.mrsohnlogcat.expect.getLogRepository
-import com.mrsohn.mrsohnlogcat.expect.getSettingsRepository
 import kotlinx.coroutines.launch
 import kotlin.time.Duration.Companion.milliseconds
 

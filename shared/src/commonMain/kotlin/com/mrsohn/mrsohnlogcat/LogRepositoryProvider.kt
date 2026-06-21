@@ -1,4 +1,4 @@
-package com.mrsohn.mrsohnlogcat.expect
+package com.mrsohn.mrsohnlogcat
 
 import com.mrsohn.mrsohnlogcat.data.LogRepository
 
