@@ -24,7 +24,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -968,6 +970,28 @@ fun LogcatScreen(
 //                ) {
 //                    Text(if (isPaused) "Resume" else "Pause", fontSize = 12.sp)
 //                }
+                Spacer(Modifier.width(8.dp))
+
+                Button(
+                    onClick = {
+                        val textToCopy = filteredLogs.joinToString("\n") { entry ->
+                            buildString {
+                                if (showTimestamp) append("${entry.timestamp} ")
+                                if (showPid) append(entry.processId.toString().padStart(5)).append(" ")
+                                if (showTid) append(entry.threadId.toString().padStart(5)).append(" ")
+                                if (showPackage) append((entry.packageName ?: "?").padEnd(25)).append(" ")
+                                if (showTag) append(entry.tag.padEnd(35)).append(" ")
+                                if (showLevel) append("${entry.level.name.first()} ")
+                                append(entry.message)
+                            }
+                        }
+                        clipboardManager.setText(AnnotatedString(textToCopy))
+                    },
+                    modifier = Modifier.height(32.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                ) {
+                    Text("Copy", fontSize = 12.sp)
+                }
                 Spacer(Modifier.width(8.dp))
                 Button(
                     onClick = {
