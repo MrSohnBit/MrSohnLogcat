@@ -3,7 +3,7 @@ package com.mrsohn.mrsohnlogcat.data
 import kotlinx.coroutines.flow.Flow
 
 interface LogRepository {
-    fun getLogs(deviceSerial: String? = null, packageName: String? = null): Flow<LogEntry>
+    fun getLogs(deviceSerial: String? = null, packageName: String? = null, onlyNew: Boolean = false): Flow<LogEntry>
     fun stopLogs()
     suspend fun getPidsForPackage(packageName: String, deviceSerial: String? = null): List<Int>
     suspend fun checkAdb(adbPath: String = "adb"): Boolean
