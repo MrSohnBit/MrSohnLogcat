@@ -24,6 +24,8 @@ compose.desktop {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "MrSohn Logcat"
             packageVersion = "1.0.7"
+            vendor = "MrSohn"
+            copyright = "Copyright 2024 MrSohn"
 
             windows {
                 shortcut = true
