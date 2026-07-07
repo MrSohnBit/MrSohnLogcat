@@ -23,9 +23,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "MrSohn Logcat"
-            packageVersion = "1.0.5"
-            vendor = "MrSohn"
-            copyright = "Copyright 2024 MrSohn"
+            packageVersion = "1.0.6"
 
             windows {
                 shortcut = true
