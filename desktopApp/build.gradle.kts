@@ -31,6 +31,7 @@ compose.desktop {
                 shortcut = true
                 menu = true
                 // If packageMsi fails, the ico file format is the likely culprit.
+                // After you replace 'icon.ico' with a real Windows ICO file, uncomment the line below.
                 iconFile.set(project.file("src/main/resources/icon.ico"))
             }
             macOS {
