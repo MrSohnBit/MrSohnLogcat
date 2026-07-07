@@ -4,22 +4,28 @@ import com.mrsohn.mrsohnlogcat.data.DeviceInfo
 import com.mrsohn.mrsohnlogcat.data.LogEntry
 import com.mrsohn.mrsohnlogcat.data.LogLevel
 import com.mrsohn.mrsohnlogcat.data.LogRepository
-import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.Duration.Companion.milliseconds
 
 class JvmLogRepository(private val adbPath: String) : LogRepository {
     private var process: Process? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val pidToPackage = mutableMapOf<Int, String>()
+    private val pidToPackage = ConcurrentHashMap<Int, String>()
     private val lastId = AtomicLong(0)
 
     private val actualAdb = if (adbPath.isBlank()) "adb" else adbPath
