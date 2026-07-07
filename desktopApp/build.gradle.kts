@@ -23,11 +23,15 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "MrSohn Logcat"
-            packageVersion = "1.0.4"
+            packageVersion = "1.0.5"
 
             windows {
                 shortcut = true
                 menu = true
+                iconFile.set(project.file("src/main/resources/icon.ico"))
+            }
+            macOS {
+                iconFile.set(project.file("src/main/resources/icon.icns"))
             }
         }
     }
