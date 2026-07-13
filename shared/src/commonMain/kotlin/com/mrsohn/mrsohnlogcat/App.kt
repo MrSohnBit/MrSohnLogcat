@@ -285,7 +285,7 @@ fun LogcatScreen(
                         isFirstCollection = false
                     }
                 } catch (e: Exception) { }
-                delay(2000)
+                delay(2000.milliseconds)
             }
         }
     }
