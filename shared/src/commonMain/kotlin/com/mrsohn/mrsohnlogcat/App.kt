@@ -1,6 +1,7 @@
 package com.mrsohn.mrsohnlogcat
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -17,13 +18,19 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.isShiftPressed
+import androidx.compose.ui.input.pointer.pointerInput
 import com.mrsohn.mrsohnlogcat.component.AdbSettingsDialog
+import com.mrsohn.mrsohnlogcat.component.LogDetailDialog
 import com.mrsohn.mrsohnlogcat.component.FormatCheckbox
 import com.mrsohn.mrsohnlogcat.component.LabelTitle
 import com.mrsohn.mrsohnlogcat.component.LogEntryRow
@@ -164,7 +171,7 @@ fun LogcatScreen(
     
     // Core data lists for performance
     val allLogs = remember { mutableListOf<LogEntry>() }
-    val displayLogs = remember { mutableStateListOf<LogEntry>() }
+    var displayLogs by remember { mutableStateOf<List<LogEntry>>(emptyList()) }
     
     var isPaused by remember { mutableStateOf(false) }
     var devices by remember { mutableStateOf(listOf<DeviceInfo>()) }
@@ -206,12 +213,17 @@ fun LogcatScreen(
 
     var targetPids by remember { mutableStateOf(setOf<Int>()) }
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var selectedDetailLog by remember { mutableStateOf<LogEntry?>(null) }
+    var detailLogsForDialog by remember { mutableStateOf<List<LogEntry>>(emptyList()) }
     val searchFocusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
     
     val listState = rememberLazyListState()
     var autoScroll by remember { mutableStateOf(true) }
+    var isMousePressed by remember { mutableStateOf(false) } 
+    var isShiftPressed by remember { mutableStateOf(false) }
+    var lastInteractionTime by remember { mutableStateOf(0L) }
     val scope = rememberCoroutineScope()
     var currentSearchMatchIndex by remember { mutableStateOf(-1) }
 
@@ -249,7 +261,7 @@ fun LogcatScreen(
         val snapshot = allLogs.toList()
         withContext(Dispatchers.Default) {
             val filtered = snapshot.filter { shouldShowEntry(it) }
-            withContext(Dispatchers.Main) { displayLogs.clear(); displayLogs.addAll(filtered) }
+            withContext(Dispatchers.Main) { displayLogs = filtered }
         }
     }
 
@@ -259,7 +271,7 @@ fun LogcatScreen(
     var restartTrigger by remember { mutableStateOf(0) }
     LaunchedEffect(repository, selectedDeviceSerial, restartTrigger) {
         withContext(Dispatchers.Default) {
-            allLogs.clear(); withContext(Dispatchers.Main) { displayLogs.clear() }
+            allLogs.clear(); withContext(Dispatchers.Main) { displayLogs = emptyList() }
             var isFirstCollection = true
             while (true) {
                 val incomingBuffer = mutableListOf<LogEntry>(); val displayBuffer = mutableListOf<LogEntry>()
@@ -271,13 +283,24 @@ fun LogcatScreen(
                             incomingBuffer.add(entry)
                             if (shouldShowEntry(entry)) displayBuffer.add(entry)
                             val now = java.lang.System.currentTimeMillis()
-                            if (now - lastBatchTime > 150 || incomingBuffer.size > 300) {
+                            if (now - lastBatchTime > 300 || incomingBuffer.size > 500) {
                                 val inBatch = incomingBuffer.toList(); val dispBatch = displayBuffer.toList()
                                 incomingBuffer.clear(); displayBuffer.clear()
                                 withContext(Dispatchers.Main) {
-                                    allLogs.addAll(inBatch); displayLogs.addAll(dispBatch)
-                                    if (allLogs.size > 55000) allLogs.subList(0, 5000).clear()
-                                    if (displayLogs.size > 30000) displayLogs.subList(0, 2000).clear()
+                                    val nowTime = java.lang.System.currentTimeMillis()
+                                    val isUserActive = isMousePressed || isShiftPressed || (nowTime - lastInteractionTime < 1000)
+                                    
+                                    // master list always gets data
+                                    allLogs.addAll(inBatch)
+                                    
+                                    // CRITICAL: NEVER update displayLogs while user is interacting
+                                    if (!isUserActive) {
+                                        displayLogs = displayLogs + dispBatch
+                                        
+                                        // Pruning ONLY when idle
+                                        if (allLogs.size > 55000) allLogs.subList(0, 5000).clear()
+                                        if (displayLogs.size > 30000) displayLogs = displayLogs.drop(2000)
+                                    }
                                 }
                                 lastBatchTime = now
                             }
@@ -315,8 +338,12 @@ fun LogcatScreen(
 
     Column(
         modifier = Modifier.fillMaxSize().onPreviewKeyEvent { 
+            if (it.key == Key.ShiftLeft || it.key == Key.ShiftRight) {
+                isShiftPressed = it.type == KeyEventType.KeyDown
+                lastInteractionTime = java.lang.System.currentTimeMillis()
+            }
             if (it.type == KeyEventType.KeyDown) {
-                if ((it.isCtrlPressed || it.isMetaPressed) && it.key == Key.F) { scope.launch { delay(50); searchFocusRequester.requestFocus() }; return@onPreviewKeyEvent true }
+                if ((it.isCtrlPressed || it.isMetaPressed) && it.key == Key.F) { scope.launch { delay(50.milliseconds); searchFocusRequester.requestFocus() }; return@onPreviewKeyEvent true }
                 if ((it.isCtrlPressed || it.isMetaPressed) && it.key == Key.A) {
                     val textToCopy = displayLogs.joinToString("\n") { entry -> buildString { if (showTimestamp) append("${entry.timestamp} "); if (showPid) append(entry.processId.toString().padStart(5)).append(" "); if (showTid) append(entry.threadId.toString().padStart(5)).append(" "); if (showPackage) append((entry.packageName ?: "?").padEnd(25)).append(" "); if (showTag) append(entry.tag.padEnd(35)).append(" "); if (showLevel) append("${entry.level.name.first()} "); append(entry.message) } }
                     clipboardManager.setText(AnnotatedString(textToCopy)); return@onPreviewKeyEvent true
@@ -435,7 +462,7 @@ fun LogcatScreen(
                         textStyle = TextStyle(fontSize = 12.sp, color = if (isDark) Color.White else Color.Black),
                         cursorBrush = androidx.compose.ui.graphics.SolidColor(if (isDark) Color.White else Color.Black),
                         singleLine = true,
-                        decorationBox = { inner -> Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) { inner() }; if (includeMessageText.isNotEmpty() && !savedFilters.contains(includeMessageText)) IconButton(onClick = { savedFilters = savedFilters + includeMessageText }, Modifier.size(20.dp)) { Icon(Icons.Default.Add, null, Modifier.size(16.dp)) }; IconButton(onClick = { showDropdown = true }, Modifier.size(20.dp)) { Icon(Icons.Default.ArrowDropDown, null, Modifier.size(16.dp)) }; if (includeMessageText.isNotEmpty()) IconButton(onClick = { includeMessageText = "" }, Modifier.size(20.dp)) { Icon(Icons.Default.Clear, null, Modifier.size(16.dp)) } } }
+                        decorationBox = { inner -> Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) { inner() }; if (includeMessageText.isNotEmpty() && !savedFilters.contains(includeMessageText)) IconButton(onClick = { savedFilters = savedFilters + includeMessageText }, Modifier.size(20.dp)) { Icon(Icons.Default.Add, null, Modifier.size(16.dp)) }; IconButton(onClick = { showDropdown = true }, Modifier.size(20.dp)) { Icon(Icons.Default.ArrowDropDown, null, Modifier.size(16.dp)) }; if (includeMessageText.isNotEmpty()) IconButton(onClick = { includeMessageText = "" }, Modifier.size(20.dp)) { Icon(Icons.Default.Clear, null, modifier = Modifier.size(16.dp)) } } }
                     )
                     DropdownMenu(expanded = showDropdown, onDismissRequest = { showDropdown = false }, modifier = Modifier.width(maxWidth)) {
                         savedFilters.forEach { f -> DropdownMenuItem(text = { Row(verticalAlignment = Alignment.CenterVertically) { Text(f, Modifier.weight(1f), fontSize = 12.sp); IconButton(onClick = { savedFilters = savedFilters - f }, Modifier.size(24.dp)) { Icon(Icons.Default.Delete, null, tint = Color.Red, modifier = Modifier.size(14.dp)) } } }, onClick = { includeMessageText = f; showDropdown = false }) }
@@ -451,7 +478,7 @@ fun LogcatScreen(
                 LabelTitle("Search")
                 BoxWithConstraints(modifier = Modifier.weight(1f)) {
                     var showDropdown by remember { mutableStateOf(false) }
-                    BasicTextField(value = filterText, onValueChange = { filterText = it }, modifier = Modifier.fillMaxWidth().height(28.dp).background(if (isDark) Color.DarkGray else Color.LightGray, MaterialTheme.shapes.small).padding(horizontal = 8.dp).focusRequester(searchFocusRequester), textStyle = TextStyle(fontSize = 12.sp, color = if (isDark) Color.White else Color.Black), singleLine = true, decorationBox = { inner -> Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) { inner() }; if (filterText.isNotEmpty() && !savedSearches.contains(filterText)) IconButton(onClick = { savedSearches = savedSearches + filterText }, Modifier.size(20.dp)) { Icon(Icons.Default.Add, null, Modifier.size(16.dp)) }; IconButton(onClick = { showDropdown = true }, Modifier.size(20.dp)) { Icon(Icons.Default.ArrowDropDown, null, Modifier.size(16.dp)) }; if (searchMatches.isNotEmpty()) { Text("${currentSearchMatchIndex + 1}/${searchMatches.size}", fontSize = 10.sp, color = if (isDark) Color.White else Color.Black, modifier = Modifier.padding(end = 4.dp)); IconButton(onClick = { currentSearchMatchIndex = if (currentSearchMatchIndex <= 0) searchMatches.size - 1 else currentSearchMatchIndex - 1; autoScroll = false; scope.launch { listState.animateScrollToItem(searchMatches[currentSearchMatchIndex]) } }, Modifier.size(20.dp)) { Icon(Icons.Default.KeyboardArrowUp, null, modifier = Modifier.size(16.dp)) }; IconButton(onClick = { currentSearchMatchIndex = (currentSearchMatchIndex + 1) % searchMatches.size; autoScroll = false; scope.launch { listState.animateScrollToItem(searchMatches[currentSearchMatchIndex]) } }, Modifier.size(20.dp)) { Icon(Icons.Default.KeyboardArrowDown, null, modifier = Modifier.size(16.dp)) } }; if (filterText.isNotEmpty()) IconButton(onClick = { filterText = "" }, Modifier.size(20.dp)) { Icon(Icons.Default.Clear, null, Modifier.size(16.dp)) } } })
+                    BasicTextField(value = filterText, onValueChange = { filterText = it }, modifier = Modifier.fillMaxWidth().height(28.dp).background(if (isDark) Color.DarkGray else Color.LightGray, MaterialTheme.shapes.small).padding(horizontal = 8.dp).focusRequester(searchFocusRequester), textStyle = TextStyle(fontSize = 12.sp, color = if (isDark) Color.White else Color.Black), singleLine = true, decorationBox = { inner -> Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) { inner() }; if (filterText.isNotEmpty() && !savedSearches.contains(filterText)) IconButton(onClick = { savedSearches = savedSearches + filterText }, Modifier.size(20.dp)) { Icon(Icons.Default.Add, null, Modifier.size(16.dp)) }; IconButton(onClick = { showDropdown = true }, Modifier.size(20.dp)) { Icon(Icons.Default.ArrowDropDown, null, Modifier.size(16.dp)) }; if (searchMatches.isNotEmpty()) { Text("${currentSearchMatchIndex + 1}/${searchMatches.size}", fontSize = 10.sp, color = if (isDark) Color.White else Color.Black, modifier = Modifier.padding(end = 4.dp)); IconButton(onClick = { currentSearchMatchIndex = if (currentSearchMatchIndex <= 0) searchMatches.size - 1 else currentSearchMatchIndex - 1; autoScroll = false; scope.launch { listState.animateScrollToItem(searchMatches[currentSearchMatchIndex]) } }, Modifier.size(20.dp)) { Icon(Icons.Default.KeyboardArrowUp, null, modifier = Modifier.size(16.dp)) }; IconButton(onClick = { currentSearchMatchIndex = (currentSearchMatchIndex + 1) % searchMatches.size; autoScroll = false; scope.launch { listState.animateScrollToItem(searchMatches[currentSearchMatchIndex]) } }, Modifier.size(20.dp)) { Icon(Icons.Default.KeyboardArrowDown, null, modifier = Modifier.size(16.dp)) } }; if (filterText.isNotEmpty()) IconButton(onClick = { filterText = "" }, Modifier.size(20.dp)) { Icon(Icons.Default.Clear, null, modifier = Modifier.size(16.dp)) } } })
                     DropdownMenu(expanded = showDropdown, onDismissRequest = { showDropdown = false }, modifier = Modifier.width(maxWidth)) {
                         savedSearches.forEach { s -> DropdownMenuItem(text = { Row(verticalAlignment = Alignment.CenterVertically) { Text(s, Modifier.weight(1f), fontSize = 12.sp); IconButton(onClick = { savedSearches = savedSearches - s }, Modifier.size(24.dp)) { Icon(Icons.Default.Delete, null, tint = Color.Gray, modifier = Modifier.size(14.dp)) } } }, onClick = { filterText = s; showDropdown = false }) }
                     }
@@ -460,32 +487,87 @@ fun LogcatScreen(
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Logs: ${displayLogs.size}/${allLogs.size}", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.padding(horizontal = 8.dp))
-                Button(onClick = { allLogs.clear(); displayLogs.clear() }, modifier = Modifier.height(32.dp), contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Clear", fontSize = 12.sp) }
+                Button(
+                    onClick = { 
+                        detailLogsForDialog = displayLogs.toList()
+                        selectedDetailLog = LogEntry(0, "", 0, 0, LogLevel.INFO, "VIEWER", "", "")
+                    }, 
+                    modifier = Modifier.height(32.dp), 
+                    contentPadding = PaddingValues(horizontal = 12.dp)
+                ) { 
+                    Text("View", fontSize = 12.sp) 
+                }
+                Spacer(Modifier.width(8.dp))
+                Button(onClick = { allLogs.clear(); displayLogs = emptyList() }, modifier = Modifier.height(32.dp), contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Clear", fontSize = 12.sp) }
             }
         }
 
         // --- Logs List ---
-        Box(modifier = Modifier.fillMaxSize()) {
-            SelectionContainer {
+        SelectionContainer {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                // Update interaction time on ANY event (scroll, move, click, etc.)
+                                lastInteractionTime = java.lang.System.currentTimeMillis()
+                                
+                                isMousePressed = event.buttons.isPrimaryPressed
+                                isShiftPressed = event.keyboardModifiers.isShiftPressed
+                            }
+                        }
+                    }
+            ) {
                 LazyColumn(
                     state = listState, 
                     modifier = Modifier.fillMaxSize().background(if (isDark) Color(0xFF0F0F0F) else Color(0xFFFFFFFF)),
                     contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp) // Bottom padding for breathing room
                 ) {
-                    items(displayLogs, key = { it.id }) { entry -> 
-                        LogEntryRow(entry, showTimestamp, showPid, showTid, showLevel, showTag, showPackage, fontSize, filterText, false, includeMessageText) 
+                    items(displayLogs) { entry -> 
+                        LogEntryRow(
+                            entry = entry, 
+                            showTimestamp = showTimestamp, 
+                            showPid = showPid, 
+                            showTid = showTid, 
+                            showLevel = showLevel, 
+                            showTag = showTag, 
+                            showPackage = showPackage, 
+                            fontSize = fontSize, 
+                            searchQuery = filterText, 
+                            isFocusedMatch = false, 
+                            includeQuery = includeMessageText
+                        )
                     }
                 }
-            }
-            if (!autoScroll && displayLogs.isNotEmpty()) { 
-                Button(
-                    onClick = { autoScroll = true; scope.launch { listState.scrollToItem(displayLogs.size - 1) } }, 
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp).padding(bottom = 8.dp) // Adjust button position
-                ) { 
-                    Text("↓ Scroll to Bottom", fontSize = 12.sp) 
-                } 
+                
+                if (!autoScroll && displayLogs.isNotEmpty()) { 
+                    Button(
+                        onClick = { autoScroll = true; scope.launch { listState.scrollToItem(displayLogs.size - 1) } }, 
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp).padding(bottom = 8.dp) // Adjust button position
+                    ) { 
+                        Text("↓ Scroll to Bottom", fontSize = 12.sp) 
+                    } 
+                }
             }
         }
     }
     if (showSettingsDialog) AdbSettingsDialog(currentPath = adbPath, excludedTags = excludedTags, onDismiss = { showSettingsDialog = false }, onSave = { newPath, newTags -> onAdbPathChange(newPath); excludedTags = newTags; showSettingsDialog = false })
+    
+    selectedDetailLog?.let { _ ->
+        LogDetailDialog(
+            entries = detailLogsForDialog,
+            showTimestamp = showTimestamp,
+            showPid = showPid,
+            showTid = showTid,
+            showLevel = showLevel,
+            showTag = showTag,
+            showPackage = showPackage,
+            onDismiss = { 
+                selectedDetailLog = null
+                detailLogsForDialog = emptyList()
+            }
+        )
+    }
 }
