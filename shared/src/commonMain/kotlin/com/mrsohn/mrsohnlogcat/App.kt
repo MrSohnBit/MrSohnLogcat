@@ -1,13 +1,16 @@
 package com.mrsohn.mrsohnlogcat
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -17,27 +20,35 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.input.pointer.isPrimaryPressed
-import androidx.compose.ui.input.pointer.isShiftPressed
-import androidx.compose.ui.input.pointer.pointerInput
 import com.mrsohn.mrsohnlogcat.component.AdbSettingsDialog
-import com.mrsohn.mrsohnlogcat.component.LogDetailDialog
 import com.mrsohn.mrsohnlogcat.component.FormatCheckbox
 import com.mrsohn.mrsohnlogcat.component.LabelTitle
 import com.mrsohn.mrsohnlogcat.component.LogEntryRow
+import com.mrsohn.mrsohnlogcat.component.LogDetailDialog
+import com.mrsohn.mrsohnlogcat.component.LogHistoryDialog
 import com.mrsohn.mrsohnlogcat.data.DeviceInfo
 import com.mrsohn.mrsohnlogcat.data.LogEntry
 import com.mrsohn.mrsohnlogcat.data.LogLevel
 import kotlinx.coroutines.*
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
 import kotlin.time.Duration.Companion.milliseconds
 
 @Composable
@@ -47,7 +58,6 @@ fun App() {
     var adbPath by remember { mutableStateOf(settings.getString("adbPath", "adb")) }
     var isAdbValid by remember { mutableStateOf<Boolean?>(null) }
     
-    // Theme state: 0 = System, 1 = Light, 2 = Dark
     var themeMode by remember { mutableStateOf(settings.getString("themeMode", "0").toIntOrNull() ?: 0) }
     
     val isDark = when (themeMode) {
@@ -169,39 +179,33 @@ fun LogcatScreen(
     val repository = remember(adbPath) { getLogRepository(adbPath) }
     val settings = remember { getSettingsRepository() }
     
-    // Core data lists for performance
+    // Data Storage
     val allLogs = remember { mutableListOf<LogEntry>() }
     var displayLogs by remember { mutableStateOf<List<LogEntry>>(emptyList()) }
     
+    // UI Mode
+    var isNotepadMode by remember { mutableStateOf(false) }
+    var notepadTextValue by remember { mutableStateOf(TextFieldValue("")) }
+    val listState = rememberLazyListState()
+    val notepadScrollState = rememberScrollState()
+
+    // Settings & State
     var isPaused by remember { mutableStateOf(false) }
     var devices by remember { mutableStateOf(listOf<DeviceInfo>()) }
     var selectedDeviceSerial by remember { mutableStateOf(settings.getString("selectedDevice", "")) }
-    
     var filterText by remember { mutableStateOf(settings.getString("filterText", "")) }
     var tagFilter by remember { mutableStateOf(settings.getString("tagFilter", "")) }
     var packageFilter by remember { mutableStateOf(settings.getString("packageFilter", "")) }
     var includeMessageText by remember { mutableStateOf(settings.getString("includeText", "")) }
     var isRegex by remember { mutableStateOf(settings.getBoolean("isRegex", false)) }
 
-    var savedPackages by remember { 
-        mutableStateOf(settings.getString("savedPackages", "").split("|").filter { it.isNotEmpty() }.toSet()) 
-    }
-    var savedTags by remember { 
-        mutableStateOf(settings.getString("savedTags", "").split("|").filter { it.isNotEmpty() }.toSet()) 
-    }
-    var savedFilters by remember { 
-        mutableStateOf(settings.getString("savedFilters", "").split("|").filter { it.isNotEmpty() }.toSet()) 
-    }
-    var savedSearches by remember { 
-        mutableStateOf(settings.getString("savedSearches", "").split("|").filter { it.isNotEmpty() }.toSet()) 
-    }
-    var excludedTags by remember { 
-        mutableStateOf(settings.getString("excludedTags", "View|MixpanelAPI|GestureDetector|VRI").split("|").filter { it.isNotEmpty() }.toSet()) 
-    }
+    var savedPackages by remember { mutableStateOf(settings.getString("savedPackages", "").split("|").filter { it.isNotEmpty() }.toSet()) }
+    var savedTags by remember { mutableStateOf(settings.getString("savedTags", "").split("|").filter { it.isNotEmpty() }.toSet()) }
+    var savedFilters by remember { mutableStateOf(settings.getString("savedFilters", "").split("|").filter { it.isNotEmpty() }.toSet()) }
+    var savedSearches by remember { mutableStateOf(settings.getString("savedSearches", "").split("|").filter { it.isNotEmpty() }.toSet()) }
+    var excludedTags by remember { mutableStateOf(settings.getString("excludedTags", "View|MixpanelAPI|GestureDetector|VRI").split("|").filter { it.isNotEmpty() }.toSet()) }
 
-    var selectedLevels by remember { 
-        mutableStateOf(LogLevel.entries.filter { settings.getBoolean("level_${it.name}", it != LogLevel.VERBOSE) }.toSet()) 
-    }
+    var selectedLevels by remember { mutableStateOf(LogLevel.entries.filter { settings.getBoolean("level_${it.name}", it != LogLevel.VERBOSE) }.toSet()) }
 
     var showTimestamp by remember { mutableStateOf(settings.getBoolean("showTimestamp", true)) }
     var showPid by remember { mutableStateOf(settings.getBoolean("showPid", true)) }
@@ -213,19 +217,77 @@ fun LogcatScreen(
 
     var targetPids by remember { mutableStateOf(setOf<Int>()) }
     var showSettingsDialog by remember { mutableStateOf(false) }
-    var selectedDetailLog by remember { mutableStateOf<LogEntry?>(null) }
-    var detailLogsForDialog by remember { mutableStateOf<List<LogEntry>>(emptyList()) }
+    var showHistoryDialog by remember { mutableStateOf(false) }
+    var selectedDetailLog by remember { mutableStateOf<List<LogEntry>?>(null) }
+    
     val searchFocusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
     
-    val listState = rememberLazyListState()
     var autoScroll by remember { mutableStateOf(true) }
     var isMousePressed by remember { mutableStateOf(false) } 
     var isShiftPressed by remember { mutableStateOf(false) }
     var lastInteractionTime by remember { mutableStateOf(0L) }
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
     var currentSearchMatchIndex by remember { mutableStateOf(-1) }
+
+    // Helper for generating text content (reusable for Notepad and Saving)
+    fun buildLogsRawText(entries: List<LogEntry>): String = buildString {
+        entries.forEach { entry ->
+            if (showTimestamp) append("${entry.timestamp} ")
+            if (showPid || showTid) {
+                if (showPid) append(entry.processId.toString().padStart(5))
+                if (showPid && showTid) append("-")
+                if (showTid) append(entry.threadId.toString().padStart(5))
+                append(" ")
+            }
+            if (showPackage) append("${(entry.packageName ?: "?").padEnd(25)} ")
+            if (showTag) append("${entry.tag.padEnd(35)} ")
+            if (showLevel) append("${entry.level.name.first()} ")
+            append(entry.message)
+            append("\n")
+        }
+    }
+
+    fun generateAnnotatedText(entries: List<LogEntry>): AnnotatedString = buildAnnotatedString {
+        entries.forEachIndexed { index, entry ->
+            val levelColor = when (entry.level) {
+                LogLevel.VERBOSE -> Color.Gray
+                LogLevel.DEBUG -> Color(0xFF64B5F6)
+                LogLevel.INFO -> Color(0xFF81C784)
+                LogLevel.WARN -> Color(0xFFFFB74D)
+                LogLevel.ERROR, LogLevel.FATAL -> Color(0xFFE57373)
+            }
+            if (showTimestamp) {
+                val s = length; append("${entry.timestamp} ")
+                addStyle(SpanStyle(color = Color(0xFF4FC3F7)), s, length)
+            }
+            if (showPid || showTid) {
+                val s = length
+                if (showPid) append(entry.processId.toString().padStart(5))
+                if (showPid && showTid) append("-")
+                if (showTid) append(entry.threadId.toString().padStart(5))
+                append(" ")
+                addStyle(SpanStyle(color = Color(0xFFFFA726)), s, length)
+            }
+            if (showPackage) {
+                val s = length; append("${(entry.packageName ?: "?").padEnd(25)} ")
+                addStyle(SpanStyle(color = Color(0xFFAED581)), s, length)
+            }
+            if (showTag) {
+                val s = length; append("${entry.tag.padEnd(35)} ")
+                addStyle(SpanStyle(color = Color(0xFFF06292)), s, length)
+            }
+            if (showLevel) {
+                val s = length; append("${entry.level.name.first()} ")
+                addStyle(SpanStyle(color = levelColor, fontWeight = FontWeight.Bold), s, length)
+            }
+            val msgS = length; append(entry.message)
+            addStyle(SpanStyle(color = levelColor), msgS, length)
+            if (index < entries.size - 1) append("\n")
+        }
+    }
 
     fun shouldShowEntry(entry: LogEntry): Boolean {
         if (!selectedLevels.contains(entry.level)) return false
@@ -246,6 +308,7 @@ fun LogcatScreen(
         return true
     }
 
+    // --- Persistence Effects ---
     LaunchedEffect(filterText, tagFilter, packageFilter, includeMessageText, isRegex, selectedDeviceSerial, excludedTags) {
         settings.setString("filterText", filterText); settings.setString("tagFilter", tagFilter); settings.setString("packageFilter", packageFilter); settings.setString("includeText", includeMessageText); settings.setBoolean("isRegex", isRegex); settings.setString("selectedDevice", selectedDeviceSerial); settings.setString("excludedTags", excludedTags.joinToString("|"))
     }
@@ -257,6 +320,7 @@ fun LogcatScreen(
     }
     LaunchedEffect(selectedLevels) { LogLevel.entries.forEach { settings.setBoolean("level_${it.name}", selectedLevels.contains(it)) } }
 
+    // --- Filter logic ---
     LaunchedEffect(tagFilter, packageFilter, includeMessageText, selectedLevels, excludedTags, targetPids) {
         val snapshot = allLogs.toList()
         withContext(Dispatchers.Default) {
@@ -267,7 +331,7 @@ fun LogcatScreen(
 
     LaunchedEffect(Unit) { while (true) { devices = repository.getDevices(); if (selectedDeviceSerial.isEmpty() && devices.isNotEmpty()) selectedDeviceSerial = devices.first().serial; delay(3000) } }
 
-    var lastLogTimestamp by remember { mutableStateOf(java.lang.System.currentTimeMillis()) }
+    // --- Log Collection Loop ---
     var restartTrigger by remember { mutableStateOf(0) }
     LaunchedEffect(repository, selectedDeviceSerial, restartTrigger) {
         withContext(Dispatchers.Default) {
@@ -278,7 +342,6 @@ fun LogcatScreen(
                 var lastBatchTime = java.lang.System.currentTimeMillis()
                 try {
                     repository.getLogs(selectedDeviceSerial.ifEmpty { null }, onlyNew = !isFirstCollection).collect { entry ->
-                        lastLogTimestamp = java.lang.System.currentTimeMillis()
                         if (!isPaused) {
                             incomingBuffer.add(entry)
                             if (shouldShowEntry(entry)) displayBuffer.add(entry)
@@ -288,16 +351,10 @@ fun LogcatScreen(
                                 incomingBuffer.clear(); displayBuffer.clear()
                                 withContext(Dispatchers.Main) {
                                     val nowTime = java.lang.System.currentTimeMillis()
-                                    val isUserActive = isMousePressed || isShiftPressed || (nowTime - lastInteractionTime < 1000)
-                                    
-                                    // master list always gets data
+                                    val isUserActive = isMousePressed || isShiftPressed || (nowTime - lastInteractionTime < 3000)
                                     allLogs.addAll(inBatch)
-                                    
-                                    // CRITICAL: NEVER update displayLogs while user is interacting
-                                    if (!isUserActive) {
+                                    if (!isNotepadMode && !isUserActive) {
                                         displayLogs = displayLogs + dispBatch
-                                        
-                                        // Pruning ONLY when idle
                                         if (allLogs.size > 55000) allLogs.subList(0, 5000).clear()
                                         if (displayLogs.size > 30000) displayLogs = displayLogs.drop(2000)
                                     }
@@ -322,6 +379,7 @@ fun LogcatScreen(
         } else targetPids = emptySet()
     }
 
+    // --- Search Navigation ---
     val searchMatches = remember(displayLogs.size, filterText, isRegex) {
         if (filterText.isEmpty()) return@remember emptyList<Int>()
         displayLogs.indices.filter { idx ->
@@ -333,241 +391,374 @@ fun LogcatScreen(
 
     val isAtBottom by remember { derivedStateOf { val layoutInfo = listState.layoutInfo; val visibleItemsInfo = layoutInfo.visibleItemsInfo; if (visibleItemsInfo.isEmpty()) true else { val lastVisibleItem = visibleItemsInfo.last(); lastVisibleItem.index == layoutInfo.totalItemsCount - 1 && lastVisibleItem.offset + lastVisibleItem.size <= layoutInfo.viewportEndOffset } } }
 
-    LaunchedEffect(displayLogs.size, tagFilter, packageFilter, includeMessageText, filterText, selectedLevels) { if (autoScroll && displayLogs.isNotEmpty()) listState.scrollToItem(displayLogs.size - 1) }
-    LaunchedEffect(listState.isScrollInProgress) { if (listState.isScrollInProgress) { snapshotFlow { isAtBottom }.collect { autoScroll = it } } }
+    LaunchedEffect(displayLogs.size, tagFilter, packageFilter, includeMessageText, filterText, selectedLevels) { 
+        if (!isNotepadMode && autoScroll && displayLogs.isNotEmpty()) listState.scrollToItem(displayLogs.size - 1) 
+    }
+    LaunchedEffect(listState.isScrollInProgress) { 
+        if (listState.isScrollInProgress) { snapshotFlow { isAtBottom }.collect { autoScroll = it } } 
+    }
 
-    Column(
-        modifier = Modifier.fillMaxSize().onPreviewKeyEvent { 
-            if (it.key == Key.ShiftLeft || it.key == Key.ShiftRight) {
-                isShiftPressed = it.type == KeyEventType.KeyDown
-                lastInteractionTime = java.lang.System.currentTimeMillis()
-            }
-            if (it.type == KeyEventType.KeyDown) {
-                if ((it.isCtrlPressed || it.isMetaPressed) && it.key == Key.F) { scope.launch { delay(50.milliseconds); searchFocusRequester.requestFocus() }; return@onPreviewKeyEvent true }
-                if ((it.isCtrlPressed || it.isMetaPressed) && it.key == Key.A) {
-                    val textToCopy = displayLogs.joinToString("\n") { entry -> buildString { if (showTimestamp) append("${entry.timestamp} "); if (showPid) append(entry.processId.toString().padStart(5)).append(" "); if (showTid) append(entry.threadId.toString().padStart(5)).append(" "); if (showPackage) append((entry.packageName ?: "?").padEnd(25)).append(" "); if (showTag) append(entry.tag.padEnd(35)).append(" "); if (showLevel) append("${entry.level.name.first()} "); append(entry.message) } }
-                    clipboardManager.setText(AnnotatedString(textToCopy)); return@onPreviewKeyEvent true
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) }
+    ) { padding ->
+        Column(
+            modifier = Modifier.fillMaxSize().padding(padding).onPreviewKeyEvent { 
+                if (it.key == Key.ShiftLeft || it.key == Key.ShiftRight) {
+                    isShiftPressed = it.type == KeyEventType.KeyDown
+                    lastInteractionTime = java.lang.System.currentTimeMillis()
                 }
-                if (it.key == Key.Escape) { filterText = ""; focusManager.clearFocus(); return@onPreviewKeyEvent true }
-                if (it.key == Key.DirectionDown && searchMatches.isNotEmpty()) { currentSearchMatchIndex = (currentSearchMatchIndex + 1) % searchMatches.size; autoScroll = false; scope.launch { listState.animateScrollToItem(searchMatches[currentSearchMatchIndex]) }; return@onPreviewKeyEvent true }
-                if (it.key == Key.DirectionUp && searchMatches.isNotEmpty()) { currentSearchMatchIndex = if (currentSearchMatchIndex <= 0) searchMatches.size - 1 else currentSearchMatchIndex - 1; autoScroll = false; scope.launch { listState.animateScrollToItem(searchMatches[currentSearchMatchIndex]) }; return@onPreviewKeyEvent true }
-            }
-            false
-        }
-    ) {
-        // --- Toolbar ---
-        Row(modifier = Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Device ", fontSize = 11.sp)
-                var showDeviceMenu by remember { mutableStateOf(false) }
-                Box {
-                    OutlinedButton(onClick = { showDeviceMenu = true }, modifier = Modifier.height(32.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
-                        val currentDevice = devices.find { it.serial == selectedDeviceSerial }
-                        Text(currentDevice?.let { "${it.model} (${it.serial})" } ?: "No Device", fontSize = 12.sp)
-                    }
-                    DropdownMenu(expanded = showDeviceMenu, onDismissRequest = { showDeviceMenu = false }) {
-                        devices.forEach { device -> DropdownMenuItem(text = { Text("${device.model} (${device.serial})") }, onClick = { selectedDeviceSerial = device.serial; showDeviceMenu = false }) }
+                if (it.type == KeyEventType.KeyDown) {
+                    if ((it.isCtrlPressed || it.isMetaPressed) && it.key == Key.F) { scope.launch { delay(50); searchFocusRequester.requestFocus() }; return@onPreviewKeyEvent true }
+                    if (it.key == Key.Escape) { filterText = ""; focusManager.clearFocus(); return@onPreviewKeyEvent true }
+                    if (!isNotepadMode) {
+                        if (it.key == Key.DirectionDown && searchMatches.isNotEmpty()) { currentSearchMatchIndex = (currentSearchMatchIndex + 1) % searchMatches.size; autoScroll = false; scope.launch { listState.scrollToItem(searchMatches[currentSearchMatchIndex]) }; return@onPreviewKeyEvent true }
+                        if (it.key == Key.DirectionUp && searchMatches.isNotEmpty()) { currentSearchMatchIndex = if (currentSearchMatchIndex <= 0) searchMatches.size - 1 else currentSearchMatchIndex - 1; autoScroll = false; scope.launch { listState.scrollToItem(searchMatches[currentSearchMatchIndex]) }; return@onPreviewKeyEvent true }
                     }
                 }
+                false
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Theme:", style = MaterialTheme.typography.bodySmall)
-                var showThemeMenu by remember { mutableStateOf(false) }
-                Box {
-                    TextButton(onClick = { showThemeMenu = true }, modifier = Modifier.height(32.dp)) { Text(when(themeMode) { 1 -> "Light"; 2 -> "Dark"; else -> "System" }, fontSize = 12.sp) }
-                    DropdownMenu(expanded = showThemeMenu, onDismissRequest = { showThemeMenu = false }) {
-                        DropdownMenuItem(text = { Text("System") }, onClick = { onThemeChange(0); showThemeMenu = false })
-                        DropdownMenuItem(text = { Text("Light") }, onClick = { onThemeChange(1); showThemeMenu = false })
-                        DropdownMenuItem(text = { Text("Dark") }, onClick = { onThemeChange(2); showThemeMenu = false })
+        ) {
+            // --- Toolbar ---
+            Row(modifier = Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Device ", fontSize = 11.sp)
+                    var showDeviceMenu by remember { mutableStateOf(false) }
+                    Box {
+                        OutlinedButton(onClick = { showDeviceMenu = true }, modifier = Modifier.height(32.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
+                            val currentDevice = devices.find { it.serial == selectedDeviceSerial }
+                            Text(currentDevice?.let { "${it.model} (${it.serial})" } ?: "No Device", fontSize = 12.sp)
+                        }
+                        DropdownMenu(expanded = showDeviceMenu, onDismissRequest = { showDeviceMenu = false }) {
+                            devices.forEach { device -> DropdownMenuItem(text = { Text("${device.model} (${device.serial})") }, onClick = { selectedDeviceSerial = device.serial; showDeviceMenu = false }) }
+                        }
                     }
                 }
-                Text("Font:", style = MaterialTheme.typography.bodySmall)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Theme:", style = MaterialTheme.typography.bodySmall)
+                    var showThemeMenu by remember { mutableStateOf(false) }
+                    Box {
+                        TextButton(onClick = { showThemeMenu = true }, modifier = Modifier.height(32.dp)) { Text(when(themeMode) { 1 -> "Light"; 2 -> "Dark"; else -> "System" }, fontSize = 12.sp) }
+                        DropdownMenu(expanded = showThemeMenu, onDismissRequest = { showThemeMenu = false }) {
+                            DropdownMenuItem(text = { Text("System") }, onClick = { onThemeChange(0); showThemeMenu = false })
+                            DropdownMenuItem(text = { Text("Light") }, onClick = { onThemeChange(1); showThemeMenu = false })
+                            DropdownMenuItem(text = { Text("Dark") }, onClick = { onThemeChange(2); showThemeMenu = false })
+                        }
+                    }
+                    Text("Font:", style = MaterialTheme.typography.bodySmall)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { if (fontSize > 8) fontSize-- }, modifier = Modifier.size(24.dp)) { Text("-", color = if (isDark) Color.White else Color.Black) }
+                        Text("$fontSize", fontSize = 12.sp, color = if (isDark) Color.White else Color.Black)
+                        IconButton(onClick = { if (fontSize < 30) fontSize++ }, modifier = Modifier.size(24.dp)) { Text("+", color = if (isDark) Color.White else Color.Black) }
+                    }
+                    IconButton(onClick = { showSettingsDialog = true }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Settings, "Settings", modifier = Modifier.size(20.dp)) }
+                }
+            }
+
+            // --- Filters Rows ---
+            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                LabelTitle("Levels")
+                LogLevel.entries.forEach { level ->
+                    FilterChip(selected = selectedLevels.contains(level), onClick = { selectedLevels = if (selectedLevels.contains(level)) selectedLevels - level else selectedLevels + level }, label = { Text(level.name.take(1), fontSize = 10.sp) }, modifier = Modifier.height(24.dp).padding(horizontal = 2.dp))
+                }
+            }
+            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                LabelTitle("Display")
+                FormatCheckbox("Time", showTimestamp, Color(0xFF4FC3F7)) { showTimestamp = it }
+                FormatCheckbox("PID", showPid, Color(0xFFFFA726)) { showPid = it }
+                FormatCheckbox("TID", showTid, Color(0xFFBA68C8)) { showTid = it }
+                FormatCheckbox("Level", showLevel, Color(0xFF66BB6A)) { showLevel = it }
+                FormatCheckbox("Package", showPackage, Color(0xFFAED581)) { showPackage = it }
+                FormatCheckbox("Tag", showTag, Color(0xFFF06292)) { showTag = it }
+            }
+
+            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                LabelTitle("Package")
+                BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                    var showDropdown by remember { mutableStateOf(false) }
+                    BasicTextField(
+                        value = packageFilter,
+                        onValueChange = { packageFilter = it },
+                        modifier = Modifier.fillMaxWidth().height(28.dp).background(if (isDark) Color.DarkGray else Color.LightGray, MaterialTheme.shapes.small).padding(horizontal = 8.dp),
+                        textStyle = TextStyle(fontSize = 12.sp, color = if (isDark) Color.White else Color.Black),
+                        cursorBrush = SolidColor(if (isDark) Color.White else Color.Black),
+                        singleLine = true,
+                        decorationBox = { inner -> Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) { inner() }; if (packageFilter.isNotEmpty() && !savedPackages.contains(packageFilter)) IconButton(onClick = { savedPackages = savedPackages + packageFilter }, Modifier.size(20.dp)) { Icon(Icons.Default.Add, null, Modifier.size(16.dp)) }; IconButton(onClick = { showDropdown = true }, Modifier.size(20.dp)) { Icon(Icons.Default.ArrowDropDown, null, Modifier.size(16.dp)) } } }
+                    )
+                    DropdownMenu(expanded = showDropdown, onDismissRequest = { showDropdown = false }, modifier = Modifier.width(maxWidth)) {
+                        savedPackages.forEach { pkg -> DropdownMenuItem(text = { Row(verticalAlignment = Alignment.CenterVertically) { Text(pkg, Modifier.weight(1f), fontSize = 12.sp); IconButton(onClick = { savedPackages = savedPackages - pkg }, Modifier.size(24.dp)) { Icon(Icons.Default.Delete, null, tint = Color.Red, modifier = Modifier.size(14.dp)) } } }, onClick = { packageFilter = pkg; showDropdown = false }) }
+                    }
+                }
+                Button(onClick = { scope.launch { repository.launchApp(packageFilter, selectedDeviceSerial) } }, modifier = Modifier.height(32.dp), contentPadding = PaddingValues(horizontal = 8.dp)) { Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(16.dp)) }
+            }
+
+            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LabelTitle("Tag")
+                    BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                        var showDropdown by remember { mutableStateOf(false) }
+                        BasicTextField(
+                            value = tagFilter,
+                            onValueChange = { tagFilter = it },
+                            modifier = Modifier.fillMaxWidth().height(28.dp).background(if (isDark) Color.DarkGray else Color.LightGray, MaterialTheme.shapes.small).padding(horizontal = 8.dp),
+                            textStyle = TextStyle(fontSize = 12.sp, color = if (isDark) Color.White else Color.Black),
+                            cursorBrush = SolidColor(if (isDark) Color.White else Color.Black),
+                            singleLine = true,
+                            decorationBox = { inner -> Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) { inner() }; if (tagFilter.isNotEmpty() && !savedTags.contains(tagFilter)) IconButton(onClick = { savedTags = savedTags + tagFilter }, Modifier.size(20.dp)) { Icon(Icons.Default.Add, null, Modifier.size(16.dp)) }; IconButton(onClick = { showDropdown = true }, Modifier.size(20.dp)) { Icon(Icons.Default.ArrowDropDown, null, Modifier.size(16.dp)) } } }
+                        )
+                        DropdownMenu(expanded = showDropdown, onDismissRequest = { showDropdown = false }, modifier = Modifier.width(maxWidth)) {
+                            savedTags.forEach { t -> DropdownMenuItem(text = { Row(verticalAlignment = Alignment.CenterVertically) { Text(t, Modifier.weight(1f), fontSize = 12.sp); IconButton(onClick = { savedTags = savedTags - t }, Modifier.size(24.dp)) { Icon(Icons.Default.Delete, null, tint = Color.Red, modifier = Modifier.size(14.dp)) } } }, onClick = { tagFilter = t; showDropdown = false }) }
+                        }
+                    }
+                }
+                Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LabelTitle("Filter")
+                    BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                        var showDropdown by remember { mutableStateOf(false) }
+                        BasicTextField(
+                            value = includeMessageText,
+                            onValueChange = { includeMessageText = it },
+                            modifier = Modifier.fillMaxWidth().height(28.dp).background(if (isDark) Color.DarkGray else Color.LightGray, MaterialTheme.shapes.small).padding(horizontal = 8.dp),
+                            textStyle = TextStyle(fontSize = 12.sp, color = if (isDark) Color.White else Color.Black),
+                            cursorBrush = SolidColor(if (isDark) Color.White else Color.Black),
+                            singleLine = true,
+                            decorationBox = { inner -> Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) { inner() }; if (includeMessageText.isNotEmpty() && !savedFilters.contains(includeMessageText)) IconButton(onClick = { savedFilters = savedFilters + includeMessageText }, Modifier.size(20.dp)) { Icon(Icons.Default.Add, null, Modifier.size(16.dp)) }; IconButton(onClick = { showDropdown = true }, Modifier.size(20.dp)) { Icon(Icons.Default.ArrowDropDown, null, Modifier.size(16.dp)) }; if (includeMessageText.isNotEmpty()) IconButton(onClick = { includeMessageText = "" }, Modifier.size(20.dp)) { Icon(Icons.Default.Clear, null, modifier = Modifier.size(16.dp)) } } }
+                        )
+                        DropdownMenu(expanded = showDropdown, onDismissRequest = { showDropdown = false }, modifier = Modifier.width(maxWidth)) {
+                            savedFilters.forEach { f -> DropdownMenuItem(text = { Row(verticalAlignment = Alignment.CenterVertically) { Text(f, Modifier.weight(1f), fontSize = 12.sp); IconButton(onClick = { savedFilters = savedFilters - f }, Modifier.size(24.dp)) { Icon(Icons.Default.Delete, null, tint = Color.Red, modifier = Modifier.size(14.dp)) } } }, onClick = { includeMessageText = f; showDropdown = false }) }
+                        }
+                    }
+                }
+            }
+
+            // --- Search Row ---
+            Row(modifier = Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
+                    LabelTitle("Search")
+                    BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                        var showDropdown by remember { mutableStateOf(false) }
+                        BasicTextField(value = filterText, onValueChange = { filterText = it }, modifier = Modifier.fillMaxWidth().height(28.dp).background(if (isDark) Color.DarkGray else Color.LightGray, MaterialTheme.shapes.small).padding(horizontal = 8.dp).focusRequester(searchFocusRequester), textStyle = TextStyle(fontSize = 12.sp, color = if (isDark) Color.White else Color.Black), singleLine = true, decorationBox = { inner -> Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) { inner() }; if (filterText.isNotEmpty() && !savedSearches.contains(filterText)) IconButton(onClick = { savedSearches = savedSearches + filterText }, Modifier.size(20.dp)) { Icon(Icons.Default.Add, null, Modifier.size(16.dp)) }; IconButton(onClick = { showDropdown = true }, Modifier.size(20.dp)) { Icon(Icons.Default.ArrowDropDown, null, Modifier.size(16.dp)) }; if (searchMatches.isNotEmpty()) { Text("${currentSearchMatchIndex + 1}/${searchMatches.size}", fontSize = 10.sp, color = if (isDark) Color.White else Color.Black, modifier = Modifier.padding(end = 4.dp)); IconButton(onClick = { currentSearchMatchIndex = if (currentSearchMatchIndex <= 0) searchMatches.size - 1 else currentSearchMatchIndex - 1; autoScroll = false; scope.launch { listState.scrollToItem(searchMatches[currentSearchMatchIndex]) } }, Modifier.size(20.dp)) { Icon(Icons.Default.KeyboardArrowUp, null, modifier = Modifier.size(16.dp)) }; IconButton(onClick = { currentSearchMatchIndex = (currentSearchMatchIndex + 1) % searchMatches.size; autoScroll = false; scope.launch { listState.scrollToItem(searchMatches[currentSearchMatchIndex]) } }, Modifier.size(20.dp)) { Icon(Icons.Default.KeyboardArrowDown, null, modifier = Modifier.size(16.dp)) } }; if (filterText.isNotEmpty()) IconButton(onClick = { filterText = "" }, Modifier.size(20.dp)) { Icon(Icons.Default.Clear, null, modifier = Modifier.size(16.dp)) } } })
+                        DropdownMenu(expanded = showDropdown, onDismissRequest = { showDropdown = false }, modifier = Modifier.width(maxWidth)) {
+                            savedSearches.forEach { s -> DropdownMenuItem(text = { Row(verticalAlignment = Alignment.CenterVertically) { Text(s, Modifier.weight(1f), fontSize = 12.sp); IconButton(onClick = { savedSearches = savedSearches - s }, Modifier.size(24.dp)) { Icon(Icons.Default.Delete, null, tint = Color.Gray, modifier = Modifier.size(14.dp)) } } }, onClick = { filterText = s; showDropdown = false }) }
+                        }
+                    }
+                    Checkbox(checked = isRegex, onCheckedChange = { isRegex = it }, Modifier.size(24.dp)); Text("Regex", fontSize = 11.sp)
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { if (fontSize > 8) fontSize-- }, modifier = Modifier.size(24.dp)) { Text("-", color = if (isDark) Color.White else Color.Black) }
-                    Text("$fontSize", fontSize = 12.sp, color = if (isDark) Color.White else Color.Black)
-                    IconButton(onClick = { if (fontSize < 30) fontSize++ }, modifier = Modifier.size(24.dp)) { Text("+", color = if (isDark) Color.White else Color.Black) }
+                    Text("Logs: ${displayLogs.size}/${allLogs.size}", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.padding(horizontal = 8.dp))
                 }
-                IconButton(onClick = { showSettingsDialog = true }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Settings, "Settings", modifier = Modifier.size(20.dp)) }
             }
-        }
 
-        // --- Levels & Display ---
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-            LabelTitle("Levels")
-            LogLevel.entries.forEach { level ->
-                FilterChip(selected = selectedLevels.contains(level), onClick = { selectedLevels = if (selectedLevels.contains(level)) selectedLevels - level else selectedLevels + level }, label = { Text(level.name.take(1), fontSize = 10.sp) }, modifier = Modifier.height(24.dp).padding(horizontal = 2.dp))
-            }
-        }
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            LabelTitle("Display")
-            FormatCheckbox("Time", showTimestamp, Color(0xFF4FC3F7)) { showTimestamp = it }
-            FormatCheckbox("PID", showPid, Color(0xFFFFA726)) { showPid = it }
-            FormatCheckbox("TID", showTid, Color(0xFFBA68C8)) { showTid = it }
-            FormatCheckbox("Level", showLevel, Color(0xFF66BB6A)) { showLevel = it }
-            FormatCheckbox("Package", showPackage, Color(0xFFAED581)) { showPackage = it }
-            FormatCheckbox("Tag", showTag, Color(0xFFF06292)) { showTag = it }
-        }
-
-        // --- Package ---
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            LabelTitle("Package")
-            BoxWithConstraints(modifier = Modifier.weight(1f)) {
-                var showDropdown by remember { mutableStateOf(false) }
-                BasicTextField(
-                    value = packageFilter,
-                    onValueChange = { packageFilter = it },
-                    modifier = Modifier.fillMaxWidth().height(28.dp).background(if (isDark) Color.DarkGray else Color.LightGray, MaterialTheme.shapes.small).padding(horizontal = 8.dp),
-                    textStyle = TextStyle(fontSize = 12.sp, color = if (isDark) Color.White else Color.Black),
-                    cursorBrush = androidx.compose.ui.graphics.SolidColor(if (isDark) Color.White else Color.Black),
-                    singleLine = true,
-                    decorationBox = { inner -> Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) { inner() }; if (packageFilter.isNotEmpty() && !savedPackages.contains(packageFilter)) IconButton(onClick = { savedPackages = savedPackages + packageFilter }, Modifier.size(20.dp)) { Icon(Icons.Default.Add, null, Modifier.size(16.dp)) }; IconButton(onClick = { showDropdown = true }, Modifier.size(20.dp)) { Icon(Icons.Default.ArrowDropDown, null, Modifier.size(16.dp)) } } }
-                )
-                DropdownMenu(expanded = showDropdown, onDismissRequest = { showDropdown = false }, modifier = Modifier.width(maxWidth)) {
-                    savedPackages.forEach { pkg -> DropdownMenuItem(text = { Row(verticalAlignment = Alignment.CenterVertically) { Text(pkg, Modifier.weight(1f), fontSize = 12.sp); IconButton(onClick = { savedPackages = savedPackages - pkg }, Modifier.size(24.dp)) { Icon(Icons.Default.Delete, null, tint = Color.Red, modifier = Modifier.size(14.dp)) } } }, onClick = { packageFilter = pkg; showDropdown = false }) }
-                }
-            }
-            Button(onClick = { scope.launch { repository.launchApp(packageFilter, selectedDeviceSerial) } }, modifier = Modifier.height(32.dp), contentPadding = PaddingValues(horizontal = 8.dp)) { Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(16.dp)) }
-        }
-
-        // --- Tag & Filter Row ---
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            // Tag Filter
-            Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                LabelTitle("Tag")
-                BoxWithConstraints(modifier = Modifier.weight(1f)) {
-                    var showDropdown by remember { mutableStateOf(false) }
-                    BasicTextField(
-                        value = tagFilter,
-                        onValueChange = { tagFilter = it },
-                        modifier = Modifier.fillMaxWidth().height(28.dp).background(if (isDark) Color.DarkGray else Color.LightGray, MaterialTheme.shapes.small).padding(horizontal = 8.dp),
-                        textStyle = TextStyle(fontSize = 12.sp, color = if (isDark) Color.White else Color.Black),
-                        cursorBrush = androidx.compose.ui.graphics.SolidColor(if (isDark) Color.White else Color.Black),
-                        singleLine = true,
-                        decorationBox = { inner -> Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) { inner() }; if (tagFilter.isNotEmpty() && !savedTags.contains(tagFilter)) IconButton(onClick = { savedTags = savedTags + tagFilter }, Modifier.size(20.dp)) { Icon(Icons.Default.Add, null, Modifier.size(16.dp)) }; IconButton(onClick = { showDropdown = true }, Modifier.size(20.dp)) { Icon(Icons.Default.ArrowDropDown, null, Modifier.size(16.dp)) } } }
-                    )
-                    DropdownMenu(expanded = showDropdown, onDismissRequest = { showDropdown = false }, modifier = Modifier.width(maxWidth)) {
-                        savedTags.forEach { t -> DropdownMenuItem(text = { Row(verticalAlignment = Alignment.CenterVertically) { Text(t, Modifier.weight(1f), fontSize = 12.sp); IconButton(onClick = { savedTags = savedTags - t }, Modifier.size(24.dp)) { Icon(Icons.Default.Delete, null, tint = Color.Red, modifier = Modifier.size(14.dp)) } } }, onClick = { tagFilter = t; showDropdown = false }) }
-                    }
-                }
-            }
-            // Filter (Include)
-            Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                LabelTitle("Filter")
-                BoxWithConstraints(modifier = Modifier.weight(1f)) {
-                    var showDropdown by remember { mutableStateOf(false) }
-                    BasicTextField(
-                        value = includeMessageText,
-                        onValueChange = { includeMessageText = it },
-                        modifier = Modifier.fillMaxWidth().height(28.dp).background(if (isDark) Color.DarkGray else Color.LightGray, MaterialTheme.shapes.small).padding(horizontal = 8.dp),
-                        textStyle = TextStyle(fontSize = 12.sp, color = if (isDark) Color.White else Color.Black),
-                        cursorBrush = androidx.compose.ui.graphics.SolidColor(if (isDark) Color.White else Color.Black),
-                        singleLine = true,
-                        decorationBox = { inner -> Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) { inner() }; if (includeMessageText.isNotEmpty() && !savedFilters.contains(includeMessageText)) IconButton(onClick = { savedFilters = savedFilters + includeMessageText }, Modifier.size(20.dp)) { Icon(Icons.Default.Add, null, Modifier.size(16.dp)) }; IconButton(onClick = { showDropdown = true }, Modifier.size(20.dp)) { Icon(Icons.Default.ArrowDropDown, null, Modifier.size(16.dp)) }; if (includeMessageText.isNotEmpty()) IconButton(onClick = { includeMessageText = "" }, Modifier.size(20.dp)) { Icon(Icons.Default.Clear, null, modifier = Modifier.size(16.dp)) } } }
-                    )
-                    DropdownMenu(expanded = showDropdown, onDismissRequest = { showDropdown = false }, modifier = Modifier.width(maxWidth)) {
-                        savedFilters.forEach { f -> DropdownMenuItem(text = { Row(verticalAlignment = Alignment.CenterVertically) { Text(f, Modifier.weight(1f), fontSize = 12.sp); IconButton(onClick = { savedFilters = savedFilters - f }, Modifier.size(24.dp)) { Icon(Icons.Default.Delete, null, tint = Color.Red, modifier = Modifier.size(14.dp)) } } }, onClick = { includeMessageText = f; showDropdown = false }) }
-                    }
-                }
-            }
-            Spacer(Modifier.width(50.dp))
-        }
-
-        // --- Search ---
-        Row(modifier = Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
-                LabelTitle("Search")
-                BoxWithConstraints(modifier = Modifier.weight(1f)) {
-                    var showDropdown by remember { mutableStateOf(false) }
-                    BasicTextField(value = filterText, onValueChange = { filterText = it }, modifier = Modifier.fillMaxWidth().height(28.dp).background(if (isDark) Color.DarkGray else Color.LightGray, MaterialTheme.shapes.small).padding(horizontal = 8.dp).focusRequester(searchFocusRequester), textStyle = TextStyle(fontSize = 12.sp, color = if (isDark) Color.White else Color.Black), singleLine = true, decorationBox = { inner -> Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) { inner() }; if (filterText.isNotEmpty() && !savedSearches.contains(filterText)) IconButton(onClick = { savedSearches = savedSearches + filterText }, Modifier.size(20.dp)) { Icon(Icons.Default.Add, null, Modifier.size(16.dp)) }; IconButton(onClick = { showDropdown = true }, Modifier.size(20.dp)) { Icon(Icons.Default.ArrowDropDown, null, Modifier.size(16.dp)) }; if (searchMatches.isNotEmpty()) { Text("${currentSearchMatchIndex + 1}/${searchMatches.size}", fontSize = 10.sp, color = if (isDark) Color.White else Color.Black, modifier = Modifier.padding(end = 4.dp)); IconButton(onClick = { currentSearchMatchIndex = if (currentSearchMatchIndex <= 0) searchMatches.size - 1 else currentSearchMatchIndex - 1; autoScroll = false; scope.launch { listState.animateScrollToItem(searchMatches[currentSearchMatchIndex]) } }, Modifier.size(20.dp)) { Icon(Icons.Default.KeyboardArrowUp, null, modifier = Modifier.size(16.dp)) }; IconButton(onClick = { currentSearchMatchIndex = (currentSearchMatchIndex + 1) % searchMatches.size; autoScroll = false; scope.launch { listState.animateScrollToItem(searchMatches[currentSearchMatchIndex]) } }, Modifier.size(20.dp)) { Icon(Icons.Default.KeyboardArrowDown, null, modifier = Modifier.size(16.dp)) } }; if (filterText.isNotEmpty()) IconButton(onClick = { filterText = "" }, Modifier.size(20.dp)) { Icon(Icons.Default.Clear, null, modifier = Modifier.size(16.dp)) } } })
-                    DropdownMenu(expanded = showDropdown, onDismissRequest = { showDropdown = false }, modifier = Modifier.width(maxWidth)) {
-                        savedSearches.forEach { s -> DropdownMenuItem(text = { Row(verticalAlignment = Alignment.CenterVertically) { Text(s, Modifier.weight(1f), fontSize = 12.sp); IconButton(onClick = { savedSearches = savedSearches - s }, Modifier.size(24.dp)) { Icon(Icons.Default.Delete, null, tint = Color.Gray, modifier = Modifier.size(14.dp)) } } }, onClick = { filterText = s; showDropdown = false }) }
-                    }
-                }
-                Checkbox(checked = isRegex, onCheckedChange = { isRegex = it }, Modifier.size(24.dp)); Text("Regex", fontSize = 11.sp)
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Logs: ${displayLogs.size}/${allLogs.size}", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.padding(horizontal = 8.dp))
-                Button(
-                    onClick = { 
-                        detailLogsForDialog = displayLogs.toList()
-                        selectedDetailLog = LogEntry(0, "", 0, 0, LogLevel.INFO, "VIEWER", "", "")
-                    }, 
-                    modifier = Modifier.height(32.dp), 
-                    contentPadding = PaddingValues(horizontal = 12.dp)
-                ) { 
-                    Text("View", fontSize = 12.sp) 
-                }
-                Spacer(Modifier.width(8.dp))
-                Button(onClick = { allLogs.clear(); displayLogs = emptyList() }, modifier = Modifier.height(32.dp), contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Clear", fontSize = 12.sp) }
-            }
-        }
-
-        // --- Logs List ---
-        SelectionContainer {
+            // --- Main Area ---
             Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(Unit) {
-                        awaitPointerEventScope {
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                // Update interaction time on ANY event (scroll, move, click, etc.)
-                                lastInteractionTime = java.lang.System.currentTimeMillis()
-                                
-                                isMousePressed = event.buttons.isPrimaryPressed
-                                isShiftPressed = event.keyboardModifiers.isShiftPressed
+                modifier = Modifier.weight(1f).fillMaxWidth().pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            lastInteractionTime = java.lang.System.currentTimeMillis()
+                            isMousePressed = event.buttons.isPrimaryPressed
+                            if (event.changes.isNotEmpty()) {
+                                val position = event.changes.first().position
+                                val viewHeight = size.height.toFloat()
+                                if (event.buttons.isPrimaryPressed && !isNotepadMode) {
+                                    if (position.y > viewHeight - 50) scope.launch { listState.scrollBy(150f) }
+                                    else if (position.y < 50 && position.y > 0) scope.launch { listState.scrollBy(-150f) }
+                                }
                             }
                         }
                     }
+                }
             ) {
-                LazyColumn(
-                    state = listState, 
-                    modifier = Modifier.fillMaxSize().background(if (isDark) Color(0xFF0F0F0F) else Color(0xFFFFFFFF)),
-                    contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp) // Bottom padding for breathing room
-                ) {
-                    items(displayLogs) { entry -> 
-                        LogEntryRow(
-                            entry = entry, 
-                            showTimestamp = showTimestamp, 
-                            showPid = showPid, 
-                            showTid = showTid, 
-                            showLevel = showLevel, 
-                            showTag = showTag, 
-                            showPackage = showPackage, 
-                            fontSize = fontSize, 
-                            searchQuery = filterText, 
-                            isFocusedMatch = false, 
-                            includeQuery = includeMessageText
+                if (isNotepadMode) {
+                    Surface(
+                        modifier = Modifier.fillMaxSize().background(if (isDark) Color(0xFF0F0F0F) else Color(0xFFFFFFFF)),
+                        color = if (isDark) Color(0xFF1E1E1E) else Color(0xFFFFFFF0)
+                    ) {
+                        BasicTextField(
+                            value = notepadTextValue,
+                            onValueChange = { notepadTextValue = it },
+                            modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(notepadScrollState),
+                            textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = fontSize.sp, color = if (isDark) Color.White else Color.Black),
+                            cursorBrush = SolidColor(if (isDark) Color.White else Color.Black),
+                            readOnly = true
                         )
                     }
+                } else {
+                    SelectionContainer {
+                        LazyColumn(
+                            state = listState, 
+                            modifier = Modifier.fillMaxSize().background(if (isDark) Color(0xFF0F0F0F) else Color(0xFFFFFFFF)),
+                            contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp)
+                        ) {
+                            items(displayLogs) { entry -> 
+                                LogEntryRow(entry, showTimestamp, showPid, showTid, showLevel, showTag, showPackage, fontSize, filterText, false, includeMessageText) 
+                            }
+                        }
+                    }
+                    if (!autoScroll && displayLogs.isNotEmpty()) { 
+                        Button(
+                            onClick = { autoScroll = true; scope.launch { listState.scrollToItem(displayLogs.size - 1) } }, 
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp).padding(bottom = 8.dp)
+                        ) { 
+                            Text("↓ Scroll to Bottom", fontSize = 12.sp) 
+                        } 
+                    }
                 }
-                
-                if (!autoScroll && displayLogs.isNotEmpty()) { 
-                    Button(
-                        onClick = { autoScroll = true; scope.launch { listState.scrollToItem(displayLogs.size - 1) } }, 
-                        modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp).padding(bottom = 8.dp) // Adjust button position
-                    ) { 
-                        Text("↓ Scroll to Bottom", fontSize = 12.sp) 
-                    } 
+            }
+
+            // --- Bottom Action Bar ---
+            Surface(
+                tonalElevation = 2.dp,
+                modifier = Modifier.fillMaxWidth(),
+                border = BorderStroke(0.5.dp, Color.LightGray.copy(alpha = 0.3f))
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    // Left: Display Mode Switcher
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        SingleChoiceSegmentedButtonRow {
+                            SegmentedButton(
+                                selected = !isNotepadMode,
+                                onClick = { isNotepadMode = false },
+                                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                                modifier = Modifier.height(30.dp),
+                                icon = { Icon(Icons.Default.List, null, modifier = Modifier.size(16.dp)) }
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text("List", fontSize = 11.sp, lineHeight = 11.sp)
+                                }
+                            }
+                            SegmentedButton(
+                                selected = isNotepadMode,
+                                onClick = { 
+                                    val content = generateAnnotatedText(displayLogs)
+                                    notepadTextValue = TextFieldValue(
+                                        annotatedString = content,
+                                        selection = TextRange(content.length)
+                                    )
+                                    isNotepadMode = true 
+                                    scope.launch {
+                                        delay(100.milliseconds)
+                                        notepadScrollState.scrollTo(notepadScrollState.maxValue)
+                                    }
+                                },
+                                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                                modifier = Modifier.height(30.dp),
+                                icon = { Icon(Icons.Default.EditNote, null, modifier = Modifier.size(18.dp)) }
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text("Notepad", fontSize = 11.sp, lineHeight = 11.sp)
+                                }
+                            }
+                        }
+                    }
+
+                    // Right: Actions
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // Quick Save
+                        Button(
+                            onClick = { 
+                                try {
+                                    val dir = File(System.getProperty("user.home"), "Documents/Logcat")
+                                    if (!dir.exists()) dir.mkdirs()
+                                    val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss").format(Date())
+                                    val file = File(dir, "logcat_$timestamp.txt")
+                                    file.writeText(buildLogsRawText(displayLogs))
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar("Saved to: ${file.name}")
+                                    }
+                                } catch (e: Exception) {
+                                    scope.launch { snackbarHostState.showSnackbar("Save failed: ${e.message}") }
+                                }
+                            },
+                            modifier = Modifier.height(32.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp),
+                            shape = MaterialTheme.shapes.small,
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                        ) {
+                            Icon(Icons.Default.Save, null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Save", fontSize = 11.sp)
+                        }
+
+                        // History
+                        OutlinedButton(
+                            onClick = { showHistoryDialog = true },
+                            modifier = Modifier.height(32.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp),
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Icon(Icons.Default.History, null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("History", fontSize = 11.sp)
+                        }
+
+                        // View Dialog
+                        OutlinedButton(
+                            onClick = { selectedDetailLog = displayLogs.toList() },
+                            modifier = Modifier.height(32.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp),
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Icon(Icons.Default.OpenInNew, null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Open Full View", fontSize = 11.sp)
+                        }
+
+                        // Clear
+                        Button(
+                            onClick = { 
+                                allLogs.clear()
+                                displayLogs = emptyList()
+                                notepadTextValue = TextFieldValue("")
+                            },
+                            modifier = Modifier.height(32.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.8f)),
+                            contentPadding = PaddingValues(horizontal = 12.dp),
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Icon(Icons.Default.DeleteSweep, null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Clear Logs", fontSize = 11.sp)
+                        }
+                    }
                 }
             }
         }
     }
+    
     if (showSettingsDialog) AdbSettingsDialog(currentPath = adbPath, excludedTags = excludedTags, onDismiss = { showSettingsDialog = false }, onSave = { newPath, newTags -> onAdbPathChange(newPath); excludedTags = newTags; showSettingsDialog = false })
     
-    selectedDetailLog?.let { _ ->
+    if (showHistoryDialog) {
+        LogHistoryDialog(
+            onDismiss = { showHistoryDialog = false },
+            onFileSelected = { fileContent: String ->
+                // Trick to show file content in LogDetailDialog:
+                // We create a dummy LogEntry with the file content as message.
+                // Since LogDetailDialog handles List<LogEntry>, we'll pass a single entry.
+                selectedDetailLog = listOf(LogEntry(0, "History File", 0, 0, LogLevel.INFO, "FILE", fileContent, ""))
+            }
+        )
+    }
+
+    selectedDetailLog?.let { logs ->
         LogDetailDialog(
-            entries = detailLogsForDialog,
+            entries = logs,
             showTimestamp = showTimestamp,
             showPid = showPid,
             showTid = showTid,
             showLevel = showLevel,
             showTag = showTag,
             showPackage = showPackage,
-            onDismiss = { 
-                selectedDetailLog = null
-                detailLogsForDialog = emptyList()
-            }
+            onDismiss = { selectedDetailLog = null }
         )
     }
 }

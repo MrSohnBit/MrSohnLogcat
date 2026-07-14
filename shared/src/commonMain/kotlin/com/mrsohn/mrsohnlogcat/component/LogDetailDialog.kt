@@ -44,7 +44,7 @@ fun LogDetailDialog(
 ) {
     val clipboardManager = LocalClipboardManager.current
     
-    // Initial content generation
+    // Initial content generation based on entries and visible fields
     val initialAnnotatedText = remember(entries, showTimestamp, showPid, showTid, showLevel, showTag, showPackage) {
         generateLogAnnotatedString(entries, showTimestamp, showPid, showTid, showLevel, showTag, showPackage)
     }
@@ -52,11 +52,12 @@ fun LogDetailDialog(
     var textFieldValue by remember { 
         mutableStateOf(TextFieldValue(
             annotatedString = initialAnnotatedText,
-            selection = TextRange(initialAnnotatedText.length)
+            selection = TextRange(initialAnnotatedText.length) // End of text
         ))
     }
     val scrollState = rememberScrollState()
 
+    // Auto-scroll to bottom on start
     LaunchedEffect(Unit) {
         scrollState.scrollTo(scrollState.maxValue)
     }
@@ -87,8 +88,8 @@ fun LogDetailDialog(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilledTonalButton(
                         onClick = { clipboardManager.setText(AnnotatedString(textFieldValue.text)) },
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                        modifier = Modifier.height(36.dp)
+                        modifier = Modifier.height(36.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp)
                     ) {
                         Icon(Icons.Default.ContentCopy, null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(8.dp))
@@ -104,11 +105,15 @@ fun LogDetailDialog(
                             val fileName = dialog.file
                             if (directory != null && fileName != null) {
                                 val file = File(directory, fileName)
-                                file.writeText(textFieldValue.text)
+                                try {
+                                    file.writeText(textFieldValue.text)
+                                } catch (e: Exception) {
+                                    // Handle error
+                                }
                             }
                         },
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                        modifier = Modifier.height(36.dp)
+                        modifier = Modifier.height(36.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp)
                     ) {
                         Icon(Icons.Default.Save, null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(8.dp))
@@ -128,7 +133,7 @@ fun LogDetailDialog(
                     BasicTextField(
                         value = textFieldValue,
                         onValueChange = { newValue ->
-                            // If text changed, re-apply highlighting
+                            // Re-apply syntax highlighting if text changed
                             textFieldValue = if (newValue.text != textFieldValue.text) {
                                 newValue.copy(annotatedString = reHighlightLogText(newValue.text))
                             } else {
@@ -158,7 +163,7 @@ fun LogDetailDialog(
     )
 }
 
-// Helper to generate initial colored text from LogEntries
+// Generate the initial rich text from LogEntry objects
 private fun generateLogAnnotatedString(
     entries: List<LogEntry>,
     showTimestamp: Boolean,
@@ -218,14 +223,11 @@ private fun generateLogAnnotatedString(
     }
 }
 
-// Helper to re-highlight raw text during editing
+// Keep colors consistent even when the user edits the text
 private fun reHighlightLogText(text: String): AnnotatedString = buildAnnotatedString {
     val lines = text.split("\n")
     lines.forEachIndexed { index, line ->
-        // Simple regex-based highlighting for raw text lines
-        // Format: [Timestamp] [PID-TID] [Package] [Tag] [Level] [Message]
-        
-        // 1. Level Detection (D, I, W, E, V, F) - usually a single char followed by space
+        // Detect level: matches single character [VDIWEF] surrounded by spaces or at line positions
         val levelMatch = Regex("""\s([VDIWEF])\s""").find(line)
         val levelChar = levelMatch?.groupValues?.get(1) ?: "D"
         val levelColor = when (levelChar) {
@@ -237,13 +239,11 @@ private fun reHighlightLogText(text: String): AnnotatedString = buildAnnotatedSt
             else -> Color(0xFF64B5F6)
         }
 
-        // Apply basic coloring (this is an approximation for performance)
-        // In notepad mode, we mostly care about keeping the message color
         append(line)
         val lineStart = length - line.length
         addStyle(SpanStyle(color = levelColor), lineStart, length)
         
-        // Highlight potential timestamps (01-01 00:00:00.000)
+        // Highlight timestamp pattern
         val tsMatch = Regex("""\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\.\d{3}""").find(line)
         tsMatch?.let {
             addStyle(SpanStyle(color = Color(0xFF4FC3F7)), lineStart + it.range.first, lineStart + it.range.last + 1)
